@@ -1,0 +1,18 @@
+{
+  "name": "squish",
+  "version": "1.0.0",
+  "description": "Squishy local file conversion in the browser. Nothing leaves your device.",
+  "private": true,
+  "scripts": {
+    "test": "node squish.test.cjs && node scripts/serve.test.cjs",
+    "test:e2e": "playwright test",
+    "serve": "node scripts/serve.cjs 8788",
+    "vendor": "bash scripts/vendor.sh",
+    "fixtures": "node scripts/make-fixtures.cjs"
+  },
+  "repository": "github:aaronjellis/squish",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "1.64.0"
+  }
+}

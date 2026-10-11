@@ -1,0 +1,12 @@
+*.inline.js
+.DS_Store
+.claude/launch.json
+.env
+.notes/
+.superpowers/
+CLAUDE.local.md
+_bmad
+dist/
+node_modules/
+playwright-report/
+test-results/
