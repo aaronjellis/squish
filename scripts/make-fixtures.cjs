@@ -103,6 +103,19 @@ write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語\n
     catch(e){console.warn("skipped fx."+f+" (sips not available)");}
   }
 })();
+// Mesh fixtures: a unit cube as binary STL, OBJ, and a deflated 3MF (as slicers write them).
+(function(){
+  const C=require("../squish-core.js"),zlib=require("zlib"),enc=new TextEncoder();
+  const cube={vertices:[0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1],
+    triangles:[0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 3,0,4, 3,4,7]};
+  write("cube.stl",C.toStl(cube));write("cube.obj",C.toObj(cube));
+  const model=enc.encode(C.modelXml3mf(cube));
+  const stored=C.to3mf(cube);
+  write("cube.3mf",C.zipWrite([
+    {name:"[Content_Types].xml",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')},
+    {name:"_rels/.rels",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')},
+    {name:"3D/3dmodel.model",data:model,deflate:new Uint8Array(zlib.deflateRawSync(Buffer.from(model)))}]));
+})();
 write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
 <g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
 <polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>

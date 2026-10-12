@@ -234,6 +234,11 @@ async function run(){
   ok("heic → jpg honors resize and type", t.r?.type==="image/jpeg" && dHeic && dHeic.w===24, t.err?String(t.err.message):(dHeic?`${dHeic.w}×${dHeic.h}`:""));
   t = await tryEngine("imageDecode",new File([new Uint8Array([1,2,3,4,5])],"bad.heic",{type:"image/heic"}),{},"png");
   ok("a corrupt HEIC fails with a plain message", t.err && /couldn't/i.test(t.err.message), String(t.err?.message));
+  group("Meshes");
+  t = await tryEngine("mesh",await fx("cube.3mf","model/3mf"),{},"stl");
+  ok("deflated cube.3mf → binary stl of 12 triangles", t.r instanceof Blob && t.r.size===84+50*12, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
+  t = await tryEngine("mesh",await fx("cube.stl","model/stl"),{},"obj"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("cube.stl → obj has 8 vertices", (s.match(/^v /gm)||[]).length===8, t.err?String(t.err.message):"");
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

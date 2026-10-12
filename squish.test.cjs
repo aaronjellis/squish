@@ -471,6 +471,42 @@ eq("heif and tif normalize", C.norm("heif")+","+C.norm("tif"), "heic,tiff");
 ok("heic, tiff, psd route to the imageDecode engine", ["heic","tiff","psd"].every(f=>C.findConverter(f,"png")?.engine==="imageDecode"&&C.findConverter(f,"webp")?.engine==="imageDecode"));
 ok("heic is no longer a planned format", !C.CONVERTERS.some(c=>c.status==="planned"&&c.from.includes("heic")));
 
+/* ---------- 24. Mesh formats ---------- */
+section("Mesh formats");
+const cube={vertices:[0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1],
+  triangles:[0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 3,0,4, 3,4,7]};
+const stlB=C.toStl(cube);
+eq("binary STL size is 84 + 50 per triangle", stlB.length, 84+50*12);
+eq("binary STL round-trips", C.parseStl(stlB).triangles.length+":"+C.parseStl(stlB).vertices.length, "36:24");
+const asciiStl="solid c\n facet normal 0 0 0\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid c\n";
+eq("ascii STL parses one triangle", JSON.stringify(C.parseStl(new TextEncoder().encode(asciiStl))), '{"vertices":[0,0,0,1,0,0,0,1,0],"triangles":[0,1,2]}');
+const objTxt=C.toObj(cube);
+ok("OBJ has 8 v lines and 12 f lines (1-based)", (objTxt.match(/^v /gm)||[]).length===8&&(objTxt.match(/^f /gm)||[]).length===12&&/^f 1 3 2$/m.test(objTxt));
+eq("OBJ parser triangulates quads and accepts v/vt/vn", JSON.stringify(C.parseObj("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1/1/1 2/2/2 3/3/3 4/4/4\n").triangles), "[0,1,2,0,2,3]");
+eq("OBJ negative indices count from the end", JSON.stringify(C.parseObj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\n").triangles), "[0,1,2]");
+ok("mesh converter is registered both ways", C.findConverter("stl","3mf")?.engine==="mesh"&&C.findConverter("3mf","obj")?.engine==="mesh"&&C.findConverter("obj","stl")?.engine==="mesh");
+ok("step and iges stay planned, pdf to xlsx is gone", C.possibleTargets("step").get("stl")==="planned"&&!C.possibleTargets("pdf").has("xlsx"));
+(async()=>{
+  const m3=await C.parse3mf(C.to3mf(cube));
+  eq("3MF round-trips (stored zip)", m3.vertices.length+":"+m3.triangles.length, "24:36");
+  const zlib=require("zlib");const enc=new TextEncoder();
+  const model=enc.encode(C.modelXml3mf(cube));
+  const dz=C.zipWrite([
+    {name:"[Content_Types].xml",data:enc.encode('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')},
+    {name:"_rels/.rels",data:enc.encode('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')},
+    {name:"3D/3dmodel.model",data:model,deflate:new Uint8Array(zlib.deflateRawSync(Buffer.from(model)))}]);
+  const entries=await C.unzip(dz);
+  ok("unzip inflates a deflated entry", entries.find(e=>e.name==="3D/3dmodel.model")?.data.length===model.length);
+  const m4=await C.parse3mf(dz);
+  eq("reads a deflated 3MF", m4.vertices.length+":"+m4.triangles.length, "24:36");
+  const blob=await C.ENGINES.mesh(new File([C.toStl(cube)],"cube.stl"),{},()=>{},"obj");
+  ok("mesh engine stl to obj", blob.type==="model/obj"&&(await blob.text()).includes("\nf "));
+  const b3=await C.ENGINES.mesh(new File([objTxt],"cube.obj"),{},()=>{},"3mf");
+  ok("mesh engine obj to 3mf is a zip", b3.type==="model/3mf"&&new Uint8Array(await b3.arrayBuffer())[0]===0x50);
+  let msg="";try{await C.ENGINES.mesh(new File(["nonsense"],"x.stl"),{},()=>{},"obj");}catch(e){msg=e.message;}
+  ok("an unreadable mesh fails clearly", /couldn't|no triangles/i.test(msg), msg);
+})();
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");

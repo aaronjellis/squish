@@ -121,11 +121,13 @@
        {key:"samplerate",label:"Sample rate",type:"select",advanced:true,choices:[["keep","Keep original"],["48000","48 kHz"],["44100","44.1 kHz (CD)"],["22050","22 kHz"]],def:"keep",hint:"Audio samples per second."},
        {key:"channels",label:"Channels",type:"select",advanced:true,choices:[["keep","Keep original"],["2","Stereo"],["1","Mono (smaller)"]],def:"keep",hint:"Mono roughly halves most files."}],
      caveats:["The first conversion downloads a 31 MB audio engine. After that it's quick."]},
+    {from:["stl","obj","3mf"], to:["stl","obj","3mf"], engine:"mesh", status:"available", options:[],
+     caveats:["Mesh to mesh only. Colors, materials, textures, and separate parts are merged or dropped."]},
     // PLANNED: shown with descriptions, route to vote
     {from:["dxf","svg","ai","eps","step","stp","iges","igs"], to:["dwg"], engine:null, status:"planned", options:[], caveats:[]},
-    {from:["step","stp","iges","igs","obj"], to:["stl","3mf"], engine:null, status:"planned", options:[], caveats:[]},
-    {from:["stl","obj"], to:["3mf","step"], engine:null, status:"planned", options:[], caveats:[]},
-    {from:["pdf"], to:["pptx","xlsx"], engine:null, status:"planned", options:[], caveats:[]},
+    {from:["step","stp","iges","igs"], to:["stl","3mf"], engine:null, status:"planned", options:[], caveats:[]},
+    {from:["stl","obj","3mf"], to:["step"], engine:null, status:"planned", options:[], caveats:[]},
+    {from:["pdf"], to:["pptx"], engine:null, status:"planned", options:[], caveats:[]},
   ];
 
   const IMPOSSIBLE = [
@@ -167,23 +169,24 @@
   /* ---------- Store-only zip writer (no dependency) ---------- */
   const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
   function crc32(bytes){let c=0xFFFFFFFF;for(let i=0;i<bytes.length;i++)c=CRC_TABLE[(c^bytes[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
-  function zipStore(entries){
+  // entries: [{name, data, deflate?}] where deflate holds raw-deflated bytes (method 8); otherwise stored.
+  function zipWrite(entries){
     const enc=new TextEncoder();const parts=[],centrals=[];let offset=0;
     const dosTime=0,dosDate=(1<<5)|1; // 1980-01-01 00:00, so output is reproducible
     entries.forEach(e=>{
-      const name=enc.encode(e.name),data=e.data,crc=crc32(data);
+      const name=enc.encode(e.name),data=e.data,crc=crc32(data),body=e.deflate||data,method=e.deflate?8:0;
       const lh=new Uint8Array(30+name.length),v=new DataView(lh.buffer);
-      v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x0800,true);v.setUint16(8,0,true);
+      v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x0800,true);v.setUint16(8,method,true);
       v.setUint16(10,dosTime,true);v.setUint16(12,dosDate,true);v.setUint32(14,crc,true);
-      v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);v.setUint16(28,0,true);
+      v.setUint32(18,body.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);v.setUint16(28,0,true);
       lh.set(name,30);
       const ch=new Uint8Array(46+name.length),c=new DataView(ch.buffer);
-      c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,0,true);
+      c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,method,true);
       c.setUint16(12,dosTime,true);c.setUint16(14,dosDate,true);c.setUint32(16,crc,true);
-      c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);
+      c.setUint32(20,body.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);
       c.setUint16(30,0,true);c.setUint16(32,0,true);c.setUint16(34,0,true);c.setUint16(36,0,true);c.setUint32(38,0,true);c.setUint32(42,offset,true);
       ch.set(name,46);
-      parts.push(lh,data);centrals.push(ch);offset+=lh.length+data.length;
+      parts.push(lh,body);centrals.push(ch);offset+=lh.length+body.length;
     });
     const cdSize=centrals.reduce((n,c)=>n+c.length,0);
     const end=new Uint8Array(22),ev=new DataView(end.buffer);
@@ -192,6 +195,26 @@
     ev.setUint32(12,cdSize,true);ev.setUint32(16,offset,true);ev.setUint16(20,0,true);
     const out=new Uint8Array(offset+cdSize+22);let p=0;
     [...parts,...centrals,end].forEach(b=>{out.set(b,p);p+=b.length;});
+    return out;
+  }
+  function zipStore(entries){return zipWrite(entries);}
+  // Reads stored and deflated entries. Inflate uses DecompressionStream (browsers and Node 18+).
+  async function unzip(bytes){
+    const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+    let eocd=-1;for(let i=bytes.length-22;i>=Math.max(0,bytes.length-70000);i--){if(v.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+    if(eocd<0)throw new Error("Squish couldn't read this file as a zip archive.");
+    const count=v.getUint16(eocd+10,true);let p=v.getUint32(eocd+16,true);const dec=new TextDecoder(),out=[];
+    for(let i=0;i<count;i++){
+      if(v.getUint32(p,true)!==0x02014b50)break;
+      const method=v.getUint16(p+10,true),csize=v.getUint32(p+20,true),nl=v.getUint16(p+28,true),el=v.getUint16(p+30,true),cl=v.getUint16(p+32,true),lo=v.getUint32(p+42,true);
+      const name=dec.decode(bytes.subarray(p+46,p+46+nl));
+      const lnl=v.getUint16(lo+26,true),lel=v.getUint16(lo+28,true),start=lo+30+lnl+lel;
+      const raw=bytes.subarray(start,start+csize);let data;
+      if(method===0)data=raw;
+      else if(method===8)data=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+      else throw new Error("This zip uses a compression method Squish can't read ("+method+").");
+      out.push({name,data});p+=46+nl+el+cl;
+    }
     return out;
   }
 
@@ -246,6 +269,17 @@
       if(toExt==="json")return new Blob([csvToJson(text)],{type:"application/json"});
       if(toExt==="csv")return new Blob([jsonToCsv(text)],{type:"text/csv"});
       throw new Error("Squish can't write ."+toExt+" from this file.");
+    },
+    async mesh(file,opts,onP,toExt){
+      const from=norm(extOf(file.name)),bytes=new Uint8Array(await file.arrayBuffer());onP(0.2,"reading the mesh");
+      let m;
+      if(from==="stl")m=parseStl(bytes);else if(from==="obj")m=parseObj(decodeText(bytes));else if(from==="3mf")m=await parse3mf(bytes);
+      else throw new Error("Squish can't read ."+from+" meshes.");
+      onP(0.7,"writing the "+toExt.toUpperCase());
+      if(toExt==="stl")return new Blob([toStl(m)],{type:"model/stl"});
+      if(toExt==="obj")return new Blob([toObj(m)],{type:"model/obj"});
+      if(toExt==="3mf")return new Blob([to3mf(m)],{type:"model/3mf"});
+      throw new Error("Squish can't write ."+toExt+" meshes.");
     },
     imageDecode:notLoaded,
     pdfRaster:notLoaded,
@@ -721,6 +755,77 @@
     return args;
   }
 
+  /* ---------- Mesh formats: STL, OBJ, 3MF ---------- */
+  // Mesh = {vertices: flat xyz numbers, triangles: flat 0-based indices}
+  function parseStl(bytes){
+    const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+    if(bytes.length>=84){const n=v.getUint32(80,true);
+      if(84+50*n===bytes.length){const verts=[],tris=[],index=new Map();
+        for(let i=0;i<n;i++){const base=84+50*i+12;
+          for(let k=0;k<3;k++){const x=v.getFloat32(base+k*12,true),y=v.getFloat32(base+k*12+4,true),z=v.getFloat32(base+k*12+8,true);
+            const key=x+","+y+","+z;let idx=index.get(key);if(idx===undefined){idx=verts.length/3;index.set(key,idx);verts.push(x,y,z);}tris.push(idx);}}
+        return {vertices:verts,triangles:tris};}}
+    const text=decodeText(bytes);const re=/vertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)/g;const verts=[],tris=[],index=new Map();let m;
+    while((m=re.exec(text))){const x=+m[1],y=+m[2],z=+m[3];const key=x+","+y+","+z;let idx=index.get(key);if(idx===undefined){idx=verts.length/3;index.set(key,idx);verts.push(x,y,z);}tris.push(idx);}
+    tris.length-=tris.length%3;
+    if(!tris.length)throw new Error("Squish couldn't find any triangles in this STL file.");
+    return {vertices:verts,triangles:tris};
+  }
+  function parseObj(text){
+    const verts=[],tris=[];
+    String(text).split(/\r?\n/).forEach(line=>{
+      const t=line.trim().split(/\s+/);if(t[0]==="v"&&t.length>=4)verts.push(+t[1],+t[2],+t[3]);
+      else if(t[0]==="f"&&t.length>=4){const n=verts.length/3;const idx=t.slice(1).map(tok=>{let i=parseInt(tok.split("/")[0],10);return i<0?n+i:i-1;}).filter(i=>i>=0&&i<n);
+        for(let k=1;k+1<idx.length;k++)tris.push(idx[0],idx[k],idx[k+1]);}
+    });
+    if(!tris.length)throw new Error("Squish couldn't find any faces in this OBJ file.");
+    return {vertices:verts,triangles:tris};
+  }
+  function modelXml3mf(mesh){
+    const V=mesh.vertices,T=mesh.triangles;let x='<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<resources>\n<object id="1" type="model">\n<mesh>\n<vertices>\n';
+    for(let i=0;i<V.length;i+=3)x+='<vertex x="'+V[i]+'" y="'+V[i+1]+'" z="'+V[i+2]+'"/>\n';
+    x+='</vertices>\n<triangles>\n';
+    for(let i=0;i<T.length;i+=3)x+='<triangle v1="'+T[i]+'" v2="'+T[i+1]+'" v3="'+T[i+2]+'"/>\n';
+    return x+'</triangles>\n</mesh>\n</object>\n</resources>\n<build>\n<item objectid="1"/>\n</build>\n</model>\n';
+  }
+  function to3mf(mesh){const enc=new TextEncoder();
+    return zipWrite([
+      {name:"[Content_Types].xml",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n</Types>\n')},
+      {name:"_rels/.rels",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n</Relationships>\n')},
+      {name:"3D/3dmodel.model",data:enc.encode(modelXml3mf(mesh))}]);
+  }
+  async function parse3mf(bytes){
+    const entries=await unzip(bytes);const dec=new TextDecoder();
+    const rels=entries.find(e=>e.name==="_rels/.rels");let target=null;
+    if(rels){const m=dec.decode(rels.data).match(/Target="\/?([^"]+\.model)"/i);if(m)target=m[1];}
+    const model=entries.find(e=>target&&e.name===target)||entries.find(e=>/\.model$/i.test(e.name));
+    if(!model)throw new Error("Squish couldn't find a 3D model inside this 3MF file.");
+    const xml=dec.decode(model.data);const verts=[],tris=[];
+    const meshRe=/<mesh[\s>][\s\S]*?<\/mesh>/g;let mm;
+    while((mm=meshRe.exec(xml))){const block=mm[0],offset=verts.length/3;
+      const vr=/<vertex\s+[^>]*?x="([^"]+)"[^>]*?y="([^"]+)"[^>]*?z="([^"]+)"/g;let v;while((v=vr.exec(block)))verts.push(+v[1],+v[2],+v[3]);
+      const tr=/<triangle\s+[^>]*?v1="(\d+)"[^>]*?v2="(\d+)"[^>]*?v3="(\d+)"/g;let t;while((t=tr.exec(block)))tris.push(offset+ +t[1],offset+ +t[2],offset+ +t[3]);}
+    if(!tris.length)throw new Error("Squish couldn't find any triangles in this 3MF file.");
+    return {vertices:verts,triangles:tris};
+  }
+  function toStl(mesh){
+    const V=mesh.vertices,T=mesh.triangles,n=T.length/3,out=new Uint8Array(84+50*n),v=new DataView(out.buffer);
+    new TextEncoder().encodeInto("Squish binary STL",out);v.setUint32(80,n,true);
+    for(let i=0;i<n;i++){const a=T[i*3]*3,b=T[i*3+1]*3,c=T[i*3+2]*3;
+      const ux=V[b]-V[a],uy=V[b+1]-V[a+1],uz=V[b+2]-V[a+2],wx=V[c]-V[a],wy=V[c+1]-V[a+1],wz=V[c+2]-V[a+2];
+      let nx=uy*wz-uz*wy,ny=uz*wx-ux*wz,nz=ux*wy-uy*wx;const len=Math.hypot(nx,ny,nz)||1;nx/=len;ny/=len;nz/=len;
+      const p=84+50*i;v.setFloat32(p,nx,true);v.setFloat32(p+4,ny,true);v.setFloat32(p+8,nz,true);
+      [a,b,c].forEach((idx,k)=>{v.setFloat32(p+12+k*12,V[idx],true);v.setFloat32(p+16+k*12,V[idx+1],true);v.setFloat32(p+20+k*12,V[idx+2],true);});
+      v.setUint16(p+48,0,true);}
+    return out;
+  }
+  function toObj(mesh){
+    const V=mesh.vertices,T=mesh.triangles;let o="# Squish\n";
+    for(let i=0;i<V.length;i+=3)o+="v "+V[i]+" "+V[i+1]+" "+V[i+2]+"\n";
+    for(let i=0;i<T.length;i+=3)o+="f "+(T[i]+1)+" "+(T[i+1]+1)+" "+(T[i+2]+1)+"\n";
+    return o;
+  }
+
   /* ---------- PDF heuristics (no OCR, just guidance) ---------- */
   async function detectImagePdf(file){try{const buf=new Uint8Array(await file.slice(0,Math.min(file.size,2e6)).arrayBuffer());
     let s="";for(let i=0;i<buf.length;i++)s+=String.fromCharCode(buf[i]);
@@ -737,7 +842,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,icoFromPngs,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};
