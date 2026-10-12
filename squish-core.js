@@ -94,7 +94,7 @@
     {from:["pdf"], to:["png","jpg"], engine:"pdfRaster", status:"available",
      options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to export every page."}],
      caveats:["Each page becomes its own image."]},
-    {from:["md","txt","html","rtf"], to:["pdf","docx","html","md","txt"], engine:"docs", status:"available", options:[], caveats:[]},
+    {from:["md","txt","html","rtf"], to:["pdf","docx","epub","html","md","txt"], engine:"docs", status:"available", options:[], caveats:[]},
     {from:["csv"], to:["json"], engine:"data", status:"available", options:[], caveats:["The first row becomes the field names. Numbers and true/false are converted."]},
     {from:["json"], to:["csv"], engine:"data", status:"available", options:[], caveats:["Needs an array of objects or rows. Nested objects are written as JSON text inside the cell."]},
     {from:["pdf"], to:["docx"], engine:"pdfDocx", status:"available", options:[],
@@ -483,18 +483,19 @@
     });
     return out+"\n";
   }
-  function htmlRun(r){
+  function htmlRun(r,xhtml){
     let t=escapeHtml(r.text||"");
-    if(r.code)t="<code>"+t+"</code>";if(r.b)t="<strong>"+t+"</strong>";if(r.i)t="<em>"+t+"</em>";
+    if(xhtml)t=t.replace(/\n/g,"<br/>");
+    if(r.code)t="<code>"+t+"</code>";if(r.b)t="<strong>"+t+"</strong>";if(r.i)t="<em>"+t+"</em>";if(r.u)t="<u>"+t+"</u>";
     const href=safeHref(r.href);
     if(href)t='<a href="'+escapeHtml(href)+'">'+t+"</a>";
     return t;
   }
-  function blocksToHtml(blocks,title){
-    const body=[];let list=null;
+  function htmlBody(blocks,xhtml){
+    const body=[];let list=null;const hr=xhtml?"<hr/>":"<hr>";
     const closeList=()=>{if(list){body.push(list==="li"?"</ul>":"</ol>");list=null;}};
     blocks.forEach(b=>{
-      const t=b.runs.map(htmlRun).join("");
+      const t=(b.runs||[]).map(r=>htmlRun(r,xhtml)).join("");
       if(b.type==="li"||b.type==="ol"){
         if(list!==b.type){closeList();body.push(b.type==="li"?"<ul>":"<ol>");list=b.type;}
         body.push("<li>"+t+"</li>");return;
@@ -502,15 +503,45 @@
       closeList();
       if(b.type==="code")body.push("<pre><code>"+escapeHtml(runsText(b.runs))+"</code></pre>");
       else if(b.type==="quote")body.push("<blockquote><p>"+t+"</p></blockquote>");
-      else if(b.type==="hr")body.push("<hr>");
+      else if(b.type==="hr")body.push(hr);
       else if(/^h[1-3]$/.test(b.type))body.push("<"+b.type+">"+t+"</"+b.type+">");
       else body.push("<p>"+t+"</p>");
     });
     closeList();
+    return body.join("\n");
+  }
+  const DOC_CSS="body{max-width:720px;margin:40px auto;padding:0 20px;font-family:system-ui,sans-serif;line-height:1.55}pre{background:#f4f4f4;padding:12px;overflow:auto}blockquote{border-left:3px solid #ccc;margin:0;padding-left:14px;color:#555}";
+  function blocksToHtml(blocks,title){
     return '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-      +'<title>'+escapeHtml(title||"Document")+'</title>\n'
-      +'<style>body{max-width:720px;margin:40px auto;padding:0 20px;font-family:system-ui,sans-serif;line-height:1.55}pre{background:#f4f4f4;padding:12px;overflow:auto}blockquote{border-left:3px solid #ccc;margin:0;padding-left:14px;color:#555}</style>\n'
-      +'</head>\n<body>\n'+body.join("\n")+'\n</body>\n</html>\n';
+      +'<title>'+escapeHtml(title||"Document")+'</title>\n<style>'+DOC_CSS+'</style>\n</head>\n<body>\n'+htmlBody(blocks,false)+'\n</body>\n</html>\n';
+  }
+  function blocksToXhtml(blocks,title){
+    return '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en" xml:lang="en">\n<head>\n'
+      +'<meta charset="utf-8"/>\n<title>'+escapeHtml(title||"Document")+'</title>\n<link rel="stylesheet" type="text/css" href="style.css"/>\n</head>\n<body>\n'+htmlBody(blocks,true)+'\n</body>\n</html>\n';
+  }
+
+  /* ---------- EPUB 3 package (entries for zipStore; mimetype must come first, stored) ---------- */
+  function uuid(){const h=[];for(let i=0;i<32;i++)h.push(Math.floor(Math.random()*16).toString(16));h[12]="4";h[16]=(8+Math.floor(Math.random()*4)).toString(16);
+    const x=h.join("");return x.slice(0,8)+"-"+x.slice(8,12)+"-"+x.slice(12,16)+"-"+x.slice(16,20)+"-"+x.slice(20);}
+  function epubEntries(blocks,title){
+    const enc=new TextEncoder(),t=escapeHtml(title||"Document"),now=new Date().toISOString().replace(/\.\d+Z$/,"Z");
+    const opf='<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en">\n'
+      +'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n<dc:identifier id="pub-id">urn:uuid:'+uuid()+'</dc:identifier>\n<dc:title>'+t+'</dc:title>\n<dc:language>en</dc:language>\n'
+      +'<meta property="dcterms:modified">'+now+'</meta>\n</metadata>\n<manifest>\n'
+      +'<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
+      +'<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>\n'
+      +'<item id="css" href="style.css" media-type="text/css"/>\n</manifest>\n<spine>\n<itemref idref="chapter"/>\n</spine>\n</package>\n';
+    const nav='<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n<head><meta charset="utf-8"/><title>'+t+'</title></head>\n'
+      +'<body><nav epub:type="toc" id="toc"><h1>Contents</h1><ol><li><a href="chapter.xhtml">'+t+'</a></li></ol></nav></body>\n</html>\n';
+    const container='<?xml version="1.0" encoding="utf-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n<rootfiles>\n<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n</rootfiles>\n</container>\n';
+    return [
+      {name:"mimetype",data:enc.encode("application/epub+zip")},
+      {name:"META-INF/container.xml",data:enc.encode(container)},
+      {name:"OEBPS/content.opf",data:enc.encode(opf)},
+      {name:"OEBPS/nav.xhtml",data:enc.encode(nav)},
+      {name:"OEBPS/chapter.xhtml",data:enc.encode(blocksToXhtml(blocks,title))},
+      {name:"OEBPS/style.css",data:enc.encode(DOC_CSS+"\n")},
+    ];
   }
 
   /* ---------- Minimal RTF reader: paragraphs, bold, italic, escapes ---------- */
@@ -672,7 +703,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,icoFromPngs,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,icoFromPngs,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};

@@ -10,7 +10,7 @@
   const C=globalThis.SquishCore;
   if(!C)throw new Error("squish-core.js must load before squish-engines.js");
   const {norm,extOf,canvasBlob,mimeFor,parsePageRange,zipStore,runsText,blocksFromText,rtfToBlocks,
-    blocksToHtml,blocksToMd,blocksToTxt,pdfTextToBlocks,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME,decodeText}=C;
+    blocksToHtml,blocksToMd,blocksToTxt,epubEntries,pdfTextToBlocks,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME,decodeText}=C;
 
   /* ---------- lazy library loading ---------- */
   const LIBS={
@@ -147,6 +147,7 @@
     if(toExt==="html")return new Blob([blocksToHtml(blocks,title)],{type:"text/html"});
     if(toExt==="md")return new Blob([blocksToMd(blocks)],{type:"text/markdown"});
     if(toExt==="txt")return new Blob([blocksToTxt(blocks)],{type:"text/plain"});
+    if(toExt==="epub")return new Blob([zipStore(epubEntries(blocks,title))],{type:"application/epub+zip"});
     if(toExt==="docx")return blocksToDocx(blocks,onP);
     if(toExt==="pdf")return blocksToPdf(blocks,title,onP);
     throw new Error("Squish can't write ."+toExt+" yet.");

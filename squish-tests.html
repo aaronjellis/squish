@@ -176,6 +176,13 @@ async function run(){
   ok("Latin-1 text decodes (accents and curly quotes)", s.includes("caf"+String.fromCharCode(0xe9))&&s.includes(String.fromCharCode(0x201c)+"quoted"+String.fromCharCode(0x201d)), t.err?String(t.err.message):s.slice(-80));
   t = await tryEngine("docs",new File([""],"empty.txt",{type:"text/plain"}),{},"html");
   ok("empty input fails clearly", t.err && /couldn't find any text/i.test(t.err.message), String(t.err?.message));
+  t = await tryEngine("docs",mdFx,{},"epub");
+  if(t.r instanceof Blob){const eb=new Uint8Array(await t.r.arrayBuffer());const es=new TextDecoder().decode(eb);
+    ok("md → epub is a zip with mimetype first", ascii(eb.subarray(0,2))==="PK" && es.slice(30,38)==="mimetype" && t.r.type==="application/epub+zip", C.fmtBytes(t.r.size));
+    const linkAt=es.indexOf('<link rel="stylesheet"');const chap=es.slice(es.lastIndexOf("<?xml",linkAt),es.indexOf("</html>",linkAt)+7);
+    const xdoc=new DOMParser().parseFromString(chap,"application/xhtml+xml");
+    ok("…and the chapter is well-formed XHTML", !xdoc.querySelector("parsererror") && xdoc.querySelector("h1")?.textContent==="Squish fixture", xdoc.querySelector("parsererror")?.textContent?.slice(0,100)||"");}
+  else { ok("md → epub is a zip with mimetype first", false, String(t.err?.message)); ok("…and the chapter is well-formed XHTML", false, ""); }
   t = await tryEngine("docs",mdFx,{},"docx");
   ok("md → docx is a zip (PK) over 2 KB", t.r instanceof Blob && t.r.size>2048 && ascii(await head(t.r,2))==="PK", t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
   ok("md → docx has the Word mime type", t.r?.type==="application/vnd.openxmlformats-officedocument.wordprocessingml.document");

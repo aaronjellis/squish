@@ -439,6 +439,18 @@ ok("png bytes follow the directory in order", ico[38]===0x89&&ico[6+32+7]===0x89
 ok("raster accepts avif and ico, and writes ico", C.findConverter("avif","png")?.engine==="raster"&&C.findConverter("ico","png")?.engine==="raster"&&C.findConverter("png","ico")?.engine==="raster");
 eq("mime for ico", C.mimeFor("ico"), "image/x-icon");
 
+/* ---------- 21. EPUB ---------- */
+section("EPUB");
+const ep=C.epubEntries([{type:"h1",runs:[{text:"T"}]},{type:"p",runs:[{text:"a<b"},{text:"\n"},{text:"c"}]},{type:"hr",runs:[]}],"My Book");
+eq("mimetype is the first entry", ep[0].name+":"+new TextDecoder().decode(ep[0].data), "mimetype:application/epub+zip");
+ok("container.xml points at the opf", ep[1].name==="META-INF/container.xml"&&/full-path="OEBPS\/content\.opf"/.test(new TextDecoder().decode(ep[1].data)));
+const opf=new TextDecoder().decode(ep.find(e=>e.name==="OEBPS/content.opf").data);
+ok("opf has title, identifier, manifest, and spine", /<dc:title>My Book<\/dc:title>/.test(opf)&&/<dc:identifier id="pub-id">urn:uuid:[0-9a-f-]{36}<\/dc:identifier>/.test(opf)&&/href="chapter.xhtml"/.test(opf)&&/<itemref idref="chapter"/.test(opf)&&/properties="nav"/.test(opf));
+const xh=new TextDecoder().decode(ep.find(e=>e.name==="OEBPS/chapter.xhtml").data);
+ok("chapter is XHTML: namespace, self-closing hr and br, escaped text", /xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/.test(xh)&&/<hr\/>/.test(xh)&&/<br\/>/.test(xh)&&/a&lt;b/.test(xh)&&!/<br>/.test(xh)&&!/<hr>/.test(xh));
+ok("the zip starts with the stored mimetype at offset 38", (z=>new TextDecoder().decode(z.subarray(38,58)))(C.zipStore(ep))==="application/epub+zip");
+ok("docs converter offers epub", C.findConverter("md","epub")?.engine==="docs");
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
