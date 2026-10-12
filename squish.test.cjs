@@ -9,6 +9,8 @@
 const C = require("./squish-core.js");
 
 let pass=0, fail=0; const fails=[];
+const pending=[]; // async sections register here so the summary waits for them
+let asyncMarker=false;
 function ok(name, cond){ if(cond){pass++; /*console.log("  ✓",name);*/} else {fail++; fails.push(name); console.log("  ✗ "+name);} }
 function eq(name,a,b){ ok(name+"  (got "+JSON.stringify(a)+")", a===b); }
 function section(t){ console.log("\n"+t); }
@@ -152,10 +154,10 @@ section("Engine placeholders");
 ok("md→docx resolves to the docs engine", C.findConverter("md","docx")?.engine==="docs");
 ok("no converter still points at 'pandoc'", !C.CONVERTERS.some(c=>c.engine==="pandoc"));
 ok("simulate() is gone", typeof C.simulate==="undefined");
-(async()=>{
+pending.push((async()=>{
   let msg="";try{await C.ENGINES.pdfRaster({},{},()=>{},"png");}catch(e){msg=String(e.message);}
   ok("placeholder engine rejects with a clear message", /squish-engines\.js/.test(msg));
-})();
+})());
 
 /* ---------- 8. Page ranges ---------- */
 section("Page ranges");
@@ -352,8 +354,8 @@ ok("md escapes a leading dash", mdEsc.includes("\\- not a bullet"));
 ok("md escapes a leading >", mdEsc.includes("\\> not a quote"));
 ok("md wraps hrefs with spaces or parens in <>", C.blocksToMd([{type:"p",runs:[{text:"w",href:"https://x.org/a (b)"}]}]).includes("[w](<https://x.org/a (b)>)"));
 // canvasBlob rejects instead of resolving null
-(async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}},"image/png");}catch(e){msg=e.message;}
-  ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})();
+pending.push((async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}},"image/png");}catch(e){msg=e.message;}
+  ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})());
 // text hygiene across shipped and doc files
 const DASH=String.fromCharCode(0x2014);
 const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh"];
@@ -413,10 +415,10 @@ eq("jsonToCsv from an array of arrays", C.jsonToCsv('[["h1","h2"],[1,2]]'), "h1,
 eq("jsonToCsv finds the first array inside an object", C.jsonToCsv('{"meta":1,"rows":[{"a":1}]}'), "a\n1\n");
 ok("jsonToCsv rejects a scalar", (()=>{try{C.jsonToCsv("42");return false;}catch(e){return /array/.test(e.message);}})());
 ok("csv and json converters are registered", C.findConverter("csv","json")?.engine==="data"&&C.findConverter("json","csv")?.engine==="data");
-(async()=>{const b=await C.ENGINES.data(new File(["a,b\n1,2"],"t.csv"),{},()=>{},"json");const txt=await b.text();
+pending.push((async()=>{const b=await C.ENGINES.data(new File(["a,b\n1,2"],"t.csv"),{},()=>{},"json");const txt=await b.text();
   ok("data engine csv to json returns JSON with numbers", b.type==="application/json"&&txt.includes('"a": 1'));
   const c=await C.ENGINES.data(new File(['[{"x":"y, z"}]'],"t.json"),{},()=>{},"csv");
-  eq("data engine json to csv quotes commas", await c.text(), 'x\n"y, z"\n');})();
+  eq("data engine json to csv quotes commas", await c.text(), 'x\n"y, z"\n');})());
 
 /* ---------- 19. More ffmpeg outputs ---------- */
 section("More ffmpeg outputs");
@@ -486,7 +488,7 @@ eq("OBJ parser triangulates quads and accepts v/vt/vn", JSON.stringify(C.parseOb
 eq("OBJ negative indices count from the end", JSON.stringify(C.parseObj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\n").triangles), "[0,1,2]");
 ok("mesh converter is registered both ways", C.findConverter("stl","3mf")?.engine==="mesh"&&C.findConverter("3mf","obj")?.engine==="mesh"&&C.findConverter("obj","stl")?.engine==="mesh");
 ok("step and iges stay planned, pdf to xlsx is gone", C.possibleTargets("step").get("stl")==="planned"&&!C.possibleTargets("pdf").has("xlsx"));
-(async()=>{
+pending.push((async()=>{
   const m3=await C.parse3mf(C.to3mf(cube));
   eq("3MF round-trips (stored zip)", m3.vertices.length+":"+m3.triangles.length, "24:36");
   const zlib=require("zlib");const enc=new TextEncoder();
@@ -505,7 +507,7 @@ ok("step and iges stay planned, pdf to xlsx is gone", C.possibleTargets("step").
   ok("mesh engine obj to 3mf is a zip", b3.type==="model/3mf"&&new Uint8Array(await b3.arrayBuffer())[0]===0x50);
   let msg="";try{await C.ENGINES.mesh(new File(["nonsense"],"x.stl"),{},()=>{},"obj");}catch(e){msg=e.message;}
   ok("an unreadable mesh fails clearly", /couldn't|no triangles/i.test(msg), msg);
-})();
+})());
 
 /* ---------- 25. PDF to PowerPoint registry ---------- */
 section("PDF to PowerPoint registry");
@@ -516,11 +518,11 @@ ok("pptx is no longer planned", !C.CONVERTERS.some(c=>c.status==="planned"&&c.to
 section("Cancellation");
 ok("throwIfAborted is quiet without a signal", (()=>{try{C.throwIfAborted(undefined);C.throwIfAborted(new AbortController().signal);return true;}catch(e){return false;}})());
 ok("throwIfAborted throws a cancelled error for an aborted signal", (()=>{const ac=new AbortController();ac.abort();try{C.throwIfAborted(ac.signal);return false;}catch(e){return e.cancelled===true&&/Cancelled/.test(e.message);}})());
-(async()=>{const ac=new AbortController();ac.abort();let msg="";
+pending.push((async()=>{const ac=new AbortController();ac.abort();let msg="";
   try{await C.ENGINES.data(new File(["a,b"],"t.csv"),{signal:ac.signal},()=>{},"json");}catch(e){msg=e.message;}
   ok("the data engine honors an aborted signal", /Cancelled/.test(msg), msg);
   try{await C.ENGINES.mesh(new File([C.toStl({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]})],"t.stl"),{signal:ac.signal},()=>{},"obj");msg="";}catch(e){msg=e.message;}
-  ok("the mesh engine honors an aborted signal", /Cancelled/.test(msg), msg);})();
+  ok("the mesh engine honors an aborted signal", /Cancelled/.test(msg), msg);})());
 
 /* ---------- 27. Two-column PDFs ---------- */
 section("Two-column PDFs");
@@ -543,11 +545,26 @@ section("Every format does something");
  ok("the only planned targets are dwg and step", C.CONVERTERS.filter(c=>c.status==="planned").every(c=>c.to.every(t=>["dwg","step","stl","3mf"].includes(t))));
  eq("version is 1.1.0", require("./package.json").version, "1.1.0");}
 
+/* ---------- 29. Review fixes, round two ---------- */
+section("Review fixes, round two");
+eq("csvValue keeps leading zeros", JSON.parse(C.csvToJson("zip\n02134\n"))[0].zip, "02134");
+eq("csvValue keeps long digit strings", JSON.parse(C.csvToJson("id\n12345678901234567890\n"))[0].id, "12345678901234567890");
+eq("csvValue still converts plain numbers and negatives", JSON.stringify(JSON.parse(C.csvToJson("a,b\n34,-1.5\n"))[0]), '{"a":34,"b":-1.5}');
+pending.push((async()=>{
+  const z=C.to3mf({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]});const dv=new DataView(z.buffer);
+  let eocd=-1;for(let i=z.length-22;i>=0;i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+  dv.setUint32(eocd+16,0x7fffff00,true); // central directory offset points outside the file
+  let msg="";try{await C.parse3mf(z);}catch(e){msg=e.message;}
+  ok("a corrupt zip offset gives the plain zip error, not a RangeError", /zip archive/.test(msg), msg);
+})());
+
 /* ---------- summary ---------- */
 function finish(){
+  ok("async checks finished before the summary", asyncMarker);
   console.log("\n────────────────────────────");
   console.log(`  ${pass} passed, ${fail} failed`);
   if(fail){console.log("  FAILED: "+fails.join(" | "));process.exit(1);}
   else console.log("  ✅ all green");
 }
-setTimeout(finish, 50);
+pending.push((async()=>{await new Promise(r=>setTimeout(r,150));asyncMarker=true;})());
+Promise.all(pending).then(finish,e=>{console.log("  ✗ an async section threw: "+(e&&e.message));fail++;finish();});

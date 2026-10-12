@@ -191,7 +191,7 @@ async function run(){
   t = await tryEngine("docs",uniFx,{},"pdf");
   if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"u.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join("");const ops=await pg.getOperatorList();const pdfjsLib=await C.loadLib("pdfjs");const imgs=ops.fnArray.filter(f=>f===pdfjsLib.OPS.paintImageXObject).length;await back.destroy();
     ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", /Ωμέγα/.test(txt)&&/Привет/.test(txt)&&/naïve/.test(txt), txt.slice(0,80));
-    ok("…emoji and CJK are drawn as pictures (≥ 2 images)", imgs>=2, imgs+" images");
+    ok("…emoji and CJK are drawn as pictures, including emoji DejaVu has glyphs for (≥ 8 images)", imgs>=8, imgs+" images");
     ok("…fonts were subset (under 400 KB)", t.r.size<400*1024, C.fmtBytes(t.r.size));
     ok("…the font download was labeled", t.labels.some(l=>/fonts/.test(l)), t.labels.join(" | "));}
   else { ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", false, String(t.err?.message)); }

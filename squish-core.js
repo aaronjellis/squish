@@ -204,12 +204,16 @@
     const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
     let eocd=-1;for(let i=bytes.length-22;i>=Math.max(0,bytes.length-70000);i--){if(v.getUint32(i,true)===0x06054b50){eocd=i;break;}}
     if(eocd<0)throw new Error("Squish couldn't read this file as a zip archive.");
+    const bad=()=>new Error("Squish couldn't read this file as a zip archive. It may be damaged.");
     const count=v.getUint16(eocd+10,true);let p=v.getUint32(eocd+16,true);const dec=new TextDecoder(),out=[];
     for(let i=0;i<count;i++){
+      if(p+46>bytes.length)throw bad();
       if(v.getUint32(p,true)!==0x02014b50)break;
       const method=v.getUint16(p+10,true),csize=v.getUint32(p+20,true),nl=v.getUint16(p+28,true),el=v.getUint16(p+30,true),cl=v.getUint16(p+32,true),lo=v.getUint32(p+42,true);
+      if(p+46+nl>bytes.length||lo+30>bytes.length)throw bad();
       const name=dec.decode(bytes.subarray(p+46,p+46+nl));
       const lnl=v.getUint16(lo+26,true),lel=v.getUint16(lo+28,true),start=lo+30+lnl+lel;
+      if(start+csize>bytes.length)throw bad();
       const raw=bytes.subarray(start,start+csize);let data;
       if(method===0)data=raw;
       else if(method===8)data=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
@@ -458,7 +462,8 @@
   }
   function csvCell(v){if(v==null)return "";const t=typeof v==="object"?JSON.stringify(v):String(v);return /[",\r\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;}
   function toCsv(rows){return rows.map(r=>r.map(csvCell).join(",")).join("\n")+"\n";}
-  function csvValue(t){if(t==="")return "";if(/^-?\d+(\.\d+)?$/.test(t))return Number(t);if(t==="true")return true;if(t==="false")return false;return t;}
+  // Numbers convert only when the digits survive the round trip, so "02134" and long IDs stay strings.
+  function csvValue(t){if(t==="")return "";if(/^-?\d+(\.\d+)?$/.test(t)&&String(Number(t))===t)return Number(t);if(t==="true")return true;if(t==="false")return false;return t;}
   function csvToJson(text){
     const rows=parseCsv(text);if(!rows.length)return "[]\n";const head=rows[0];
     return JSON.stringify(rows.slice(1).map(r=>{const o={};head.forEach((h,i)=>{o[h||("col"+(i+1))]=csvValue(r[i]==null?"":r[i]);});return o;}),null,2)+"\n";

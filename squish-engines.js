@@ -288,6 +288,9 @@
   }
   const allRuns=b=>b.type==="table"?(b.rows||[]).flat():(b.runs||[]);
   const needsUnicode=blocks=>blocks.some(b=>allRuns(b).some(r=>[...(r.text||"")].some(ch=>ch!=="\t"&&pdfSafeText(ch)!==ch)));
+  // In the standard-font path, emoji inside WinAnsi text would become "?". Route them to the
+  // picture path too by forcing the Unicode path whenever the text has any emoji.
+  const hasEmoji=blocks=>blocks.some(b=>allRuns(b).some(r=>/\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Regional_Indicator}/u.test(r.text||"")));
   const graphemes=str=>typeof Intl!=="undefined"&&Intl.Segmenter?[...new Intl.Segmenter(undefined,{granularity:"grapheme"}).segment(str)].map(g=>g.segment):[...str];
 
   async function blocksToPdf(blocks,title,onP){
@@ -296,7 +299,7 @@
     const pdf=await PDFDocument.create();pdf.setTitle(title||"Document");
     const F={};
     let unicode=false,charSet=null;
-    if(needsUnicode(blocks)){
+    if(needsUnicode(blocks)||hasEmoji(blocks)){
       const fk=await loadLib("fontkit",onP);pdf.registerFontkit(fk);
       const fb=await loadFonts(onP);onP(0.6,"laying out pages");
       for(const k of Object.keys(FONT_FILES))F[k]=await pdf.embedFont(fb[k],{subset:true});
@@ -310,7 +313,10 @@
     let page=pdf.addPage([W,H]),y=H-M;
     const newPage=()=>{page=pdf.addPage([W,H]);y=H-M;};
     const safe=unicode?(t=>String(t).replace(/\t/g,"    ")):pdfSafeText;
-    const canDraw=g=>!unicode||[...g].every(ch=>charSet.has(ch.codePointAt(0)));
+    // Emoji always go through the system font, even when DejaVu has a monochrome glyph for them,
+    // so they look the way they do on screen. Everything else uses the font when it has the glyph.
+    const EMOJI=/\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Regional_Indicator}/u;
+    const canDraw=g=>!unicode?true:!EMOJI.test(g)&&[...g].every(ch=>charSet.has(ch.codePointAt(0)));
     const fontFor=(r,bold)=>r.code?F.c:((r.b||bold)&&r.i)?F.bi:(r.b||bold)?F.b:r.i?F.i:F.r;
     const SIZE={h1:22,h2:17,h3:14,p:11,li:11,ol:11,quote:11,code:9.5,hr:11,table:10};
     const widthOf=w=>w.img?w.w:w.font.widthOfTextAtSize(w.text,w.size);

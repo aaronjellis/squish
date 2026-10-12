@@ -87,7 +87,7 @@ write("table.md",`# Table fixture
 
 Some <u>underlined</u> text.
 `);
-write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語\n");
+write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語 "+[0x2764,0xFE0F,0x20,0x263A,0xFE0F,0x20,0x2714,0xFE0F,0x20,0x1F600].map(c=>String.fromCodePoint(c)).join("")+"\n");
 // A 48x32 PNG, then HEIC, TIFF, and PSD copies via macOS sips (skipped elsewhere).
 (function(){
   const zlib=require("zlib");const w=48,h=32,rows=[];
