@@ -88,6 +88,21 @@ write("table.md",`# Table fixture
 Some <u>underlined</u> text.
 `);
 write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語\n");
+// A 48x32 PNG, then HEIC, TIFF, and PSD copies via macOS sips (skipped elsewhere).
+(function(){
+  const zlib=require("zlib");const w=48,h=32,rows=[];
+  for(let y=0;y<h;y++){const row=[0];for(let x=0;x<w;x++)row.push((x*5)%256,(y*7)%256,128,255);rows.push(Buffer.from(row));}
+  const crcT=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;crcT[n]=c>>>0;}
+  const crc=b=>{let c=0xFFFFFFFF;for(const x of b)c=crcT[(c^x)&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};
+  const chunk=(t,d)=>{const len=Buffer.alloc(4);len.writeUInt32BE(d.length);const td=Buffer.concat([Buffer.from(t),d]);const c=Buffer.alloc(4);c.writeUInt32BE(crc(td));return Buffer.concat([len,td,c]);};
+  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w,0);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=6;
+  const png=Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(Buffer.concat(rows))),chunk("IEND",Buffer.alloc(0))]);
+  write("fx.png",png);
+  for(const f of ["heic","tiff","psd"]){
+    try{execFileSync("sips",["-s","format",f,path.join(dir,"fx.png"),"--out",path.join(dir,"fx."+f)],{stdio:"ignore"});console.log("fixtures/fx."+f);}
+    catch(e){console.warn("skipped fx."+f+" (sips not available)");}
+  }
+})();
 write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
 <g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
 <polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>

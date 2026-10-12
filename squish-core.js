@@ -91,6 +91,9 @@
         hint:"Unit the DXF declares for the imported geometry."},
      ],
      caveats:["Text and embedded images in the SVG aren't exported. Outline your text first."]},
+    {from:["heic","heif","tiff","tif","psd"], to:["png","jpg","webp"], engine:"imageDecode", status:"available",
+     options:[optQuality, optResizeAdv],
+     caveats:["Layers, text, and adjustments are flattened to the composite image."]},
     {from:["pdf"], to:["png","jpg"], engine:"pdfRaster", status:"available",
      options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to export every page."}],
      caveats:["Each page becomes its own image."]},
@@ -122,7 +125,6 @@
     {from:["dxf","svg","ai","eps","step","stp","iges","igs"], to:["dwg"], engine:null, status:"planned", options:[], caveats:[]},
     {from:["step","stp","iges","igs","obj"], to:["stl","3mf"], engine:null, status:"planned", options:[], caveats:[]},
     {from:["stl","obj"], to:["3mf","step"], engine:null, status:"planned", options:[], caveats:[]},
-    {from:["heic"], to:["png","jpg","webp"], engine:null, status:"planned", options:[], caveats:[]},
     {from:["pdf"], to:["pptx","xlsx"], engine:null, status:"planned", options:[], caveats:[]},
   ];
 
@@ -132,7 +134,7 @@
   ];
 
   /* ---------- Helpers ---------- */
-  const norm = e => (e==="jpeg" ? "jpg" : e);
+  const norm = e => (e==="jpeg" ? "jpg" : e==="heif" ? "heic" : e==="tif" ? "tiff" : e);
   const extOf = n => (String(n).split(".").pop()||"").toLowerCase();
   function findConverter(from,to){from=norm(from);to=norm(to);return CONVERTERS.find(c=>c.from.map(norm).includes(from)&&c.to.map(norm).includes(to));}
   function possibleTargets(from){from=norm(from);const set=new Map();
@@ -245,6 +247,7 @@
       if(toExt==="csv")return new Blob([jsonToCsv(text)],{type:"text/csv"});
       throw new Error("Squish can't write ."+toExt+" from this file.");
     },
+    imageDecode:notLoaded,
     pdfRaster:notLoaded,
     docs:notLoaded,
     pdfDocx:notLoaded,

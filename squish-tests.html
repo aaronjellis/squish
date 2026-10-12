@@ -223,6 +223,17 @@ async function run(){
   ok("csv → json keeps the quoted comma", s.includes('"note": "likes tea, not coffee"'), t.err?String(t.err.message):s.slice(0,80));
   t = await tryEngine("data",await fx("people.json","application/json"),{},"csv"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("json → csv has a header and two rows", s==="name,city,age\nAnn,Oslo,34\nBo,Lima,27\n", t.err?String(t.err.message):JSON.stringify(s));
+  group("HEIC, TIFF, and PSD input");
+  for(const [name,type] of [["fx.heic","image/heic"],["fx.tiff","image/tiff"],["fx.psd","image/vnd.adobe.photoshop"]]){
+    t = await tryEngine("imageDecode",await fx(name,type),{quality:"90",resize:"1"},"png");
+    const d = t.r instanceof Blob ? await decode(t.r) : null;
+    ok(name+" → png decodes to 48×32", d && d.w===48 && d.h===32, t.err?String(t.err.message):(d?`${d.w}×${d.h}`:"undecodable"));
+  }
+  t = await tryEngine("imageDecode",await fx("fx.heic","image/heic"),{quality:"80",resize:"0.5"},"jpg");
+  const dHeic = t.r instanceof Blob ? await decode(t.r) : null;
+  ok("heic → jpg honors resize and type", t.r?.type==="image/jpeg" && dHeic && dHeic.w===24, t.err?String(t.err.message):(dHeic?`${dHeic.w}×${dHeic.h}`:""));
+  t = await tryEngine("imageDecode",new File([new Uint8Array([1,2,3,4,5])],"bad.heic",{type:"image/heic"}),{},"png");
+  ok("a corrupt HEIC fails with a plain message", t.err && /couldn't/i.test(t.err.message), String(t.err?.message));
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

@@ -21,6 +21,9 @@
     ffmpeg:{url:"vendor/ffmpeg/index.js",label:"the video engine"},
     ffutil:{url:"vendor/ffmpeg-util/index.js",label:"the video engine"},
     fontkit:{url:"vendor/fontkit/fontkit.umd.min.js",kind:"script",global:"fontkit",label:"the font engine"},
+    heif:{url:"vendor/libheif/libheif-bundle.mjs",label:"the HEIC decoder (2 MB, first time only)"},
+    utif:{url:"vendor/utif/UTIF.js",kind:"script",global:"UTIF",label:"the TIFF decoder"},
+    agpsd:{url:"vendor/ag-psd/bundle.js",kind:"script",global:"agPsd",label:"the Photoshop reader"},
   };
   const loaded={};
   // UMD builds: inject a script tag and hand back the global it defines.
@@ -55,6 +58,50 @@
     return C.shapesToDxf(shapes,mode,tol);
   }
   C.svgToDxf=svgToDxf;
+
+  /* ---------- HEIC, TIFF, PSD -> canvas ---------- */
+  function canvasFromRgba(rgba,w,h){const c=document.createElement("canvas");c.width=w;c.height=h;
+    c.getContext("2d").putImageData(new ImageData(rgba instanceof Uint8ClampedArray?rgba:new Uint8ClampedArray(rgba.buffer||rgba),w,h),0,0);return c;}
+  let libheifReady=null;
+  async function decodeToCanvas(file,from,onP){
+    const buf=await file.arrayBuffer();
+    if(from==="heic"){
+      const mod=await loadLib("heif",onP);
+      if(!libheifReady)libheifReady=mod.default();
+      const libheif=await libheifReady;
+      let imgs;try{imgs=new libheif.HeifDecoder().decode(new Uint8Array(buf));}catch(e){imgs=[];}
+      if(!imgs||!imgs.length)throw new Error("Squish couldn't read this HEIC file. It may be damaged or not an image.");
+      const im=imgs[0],w=im.get_width(),h=im.get_height();
+      const data=await new Promise(res=>im.display({data:new Uint8ClampedArray(w*h*4),width:w,height:h},res));
+      imgs.forEach(i=>{try{i.free();}catch(e){}});
+      if(!data)throw new Error("Squish couldn't decode this HEIC image.");
+      return canvasFromRgba(data.data,w,h);
+    }
+    if(from==="tiff"){
+      const UTIF=await loadLib("utif",onP);let ifds;
+      try{ifds=UTIF.decode(buf);}catch(e){ifds=[];}
+      if(!ifds.length)throw new Error("Squish couldn't read this TIFF file.");
+      UTIF.decodeImage(buf,ifds[0]);const rgba=UTIF.toRGBA8(ifds[0]);
+      return canvasFromRgba(rgba,ifds[0].width,ifds[0].height);
+    }
+    if(from==="psd"){
+      const ag=await loadLib("agpsd",onP);
+      if(ag.initializeCanvas)ag.initializeCanvas((w,h)=>{const c=document.createElement("canvas");c.width=w;c.height=h;return c;});
+      let psd;try{psd=ag.readPsd(buf,{skipLayerImageData:true,skipThumbnail:true});}catch(e){throw new Error("Squish couldn't read this PSD file. "+(e&&e.message||""));}
+      if(psd.canvas)return psd.canvas;
+      if(psd.imageData)return canvasFromRgba(psd.imageData.data,psd.width,psd.height);
+      throw new Error("This PSD has no flattened image. Save it with 'Maximize compatibility' turned on.");
+    }
+    throw new Error("Squish can't read ."+from+" files.");
+  }
+  async function imageDecode(file,opts,onP,toExt){
+    const from=norm(extOf(file.name));const src=await decodeToCanvas(file,from,onP);onP(0.7,"encoding");
+    const scale=parseFloat(opts.resize||"1"),c=document.createElement("canvas");
+    c.width=Math.max(1,Math.round(src.width*scale));c.height=Math.max(1,Math.round(src.height*scale));
+    const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
+    ctx.drawImage(src,0,0,c.width,c.height);
+    return canvasBlob(c,mimeFor(toExt),(parseInt(opts.quality||85,10))/100);
+  }
 
   /* ---------- pdf.js ---------- */
   async function openPdf(file,onP){
@@ -384,6 +431,6 @@
       }
     }
 
-    Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,ffmpeg});
+    Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,ffmpeg,imageDecode});
     C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;
   })();

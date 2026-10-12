@@ -465,6 +465,12 @@ ok("underline survives in html and md", C.blocksToHtml([{type:"p",runs:[{text:"u
 ok("rtf \\ul and \\ulnone toggle underline", (r=>r[0].runs.map(x=>!!x.u).join(","))(C.rtfToBlocks(String.raw`{\rtf1 \ul on\ulnone  off}`))==="true,false");
 ok("xhtml table and nested list are well formed", (x=>x.includes("<table>")&&x.includes("<ul>\n<li>a\n<ul>"))(C.blocksToXhtml([...nested,...tbl],"t")));
 
+/* ---------- 23. HEIC, TIFF, PSD registry ---------- */
+section("HEIC, TIFF, PSD registry");
+eq("heif and tif normalize", C.norm("heif")+","+C.norm("tif"), "heic,tiff");
+ok("heic, tiff, psd route to the imageDecode engine", ["heic","tiff","psd"].every(f=>C.findConverter(f,"png")?.engine==="imageDecode"&&C.findConverter(f,"webp")?.engine==="imageDecode"));
+ok("heic is no longer a planned format", !C.CONVERTERS.some(c=>c.status==="planned"&&c.from.includes("heic")));
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
