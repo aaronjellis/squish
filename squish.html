@@ -311,6 +311,7 @@
     <div class="convPct" id="convPct">0%</div>
     <div class="convWhat" id="convWhat">warming up…</div>
     <div class="convEta" id="convEta"></div>
+    <button class="rbtn" id="cancelBtn" type="button" style="margin-top:14px">Cancel</button>
   </div>
 </div>
 
@@ -547,14 +548,18 @@ function updateEstimates(){
   else if(cat==="audio")factor=0.3;else if(t==="gif")factor=1.6;
   if(state.opts.resize){const s=parseFloat(state.opts.resize);factor*=s*s;}
   const est=Math.max(2048,inSize*factor);$("#estSize").textContent="~"+fmtBytes(est);
-  const weight={raster:.4,svgRaster:.5,svgDxf:.3,pdfRaster:2,docs:.5,pdfDocx:1.5,ffmpeg:12}[state.conv.engine]||1;
+  const weight={raster:.4,svgRaster:.5,svgDxf:.3,pdfRaster:2,docs:.5,pdfDocx:1.5,pdfPptx:2.5,imageDecode:1,data:.2,mesh:.5,ffmpeg:12}[state.conv.engine]||1;
   let secs=(inSize/1048576)*weight/benchScore+0.5;secs=Math.min(secs,cat==="video"?180:30);
   $("#estTime").textContent=secs<1?"<1 sec":secs<60?Math.ceil(secs)+" sec":Math.ceil(secs/60)+" min";state._estSecs=secs;
 }
 
 /* ---------- convert (paced so the animation feels satisfying) ---------- */
 $("#convertBtn").addEventListener("click",runConvert);
+$("#cancelBtn").addEventListener("click",()=>{if(!state.abort||state.cancelled)return;state.cancelled=true;state.abort.abort();});
 async function runConvert(){const conv=state.conv;if(!conv)return;
+  const oldNote=$("#cancelNote");if(oldNote)oldNote.remove();
+  state.abort=new AbortController();state.cancelled=false;
+  const opts={...state.opts,signal:state.abort.signal};
   show("#converting");$("#converting").removeAttribute("inert");startHelix();
   $("#convWhat").textContent="squishing your file…";
   const minDur=Math.min(8000,Math.max(3000,(state._estSecs||3)*1000));
@@ -565,18 +570,22 @@ async function runConvert(){const conv=state.conv;if(!conv)return;
     else if(p>.80)$("#convWhat").textContent="almost there…";
     else if(p>.30)$("#convWhat").textContent="reshaping…";};
   let engineDone=false,result=null,error=null,engP=0,engLabel="";
-  ENGINES[conv.engine](state.file,state.opts,(f,label)=>{if(typeof f==="number"&&f>engP)engP=Math.min(1,f);if(label)engLabel=label;},state.toExt)
+  ENGINES[conv.engine](state.file,opts,(f,label)=>{if(typeof f==="number"&&f>engP)engP=Math.min(1,f);if(label)engLabel=label;},state.toExt)
     .then(r=>{result=r;}).catch(e=>{error=e||new Error("unknown error");}).finally(()=>{engineDone=true;});
   const t0=performance.now();let p=0;
   await new Promise(res=>{function tick(){const el=performance.now()-t0;
     const paced=Math.min(0.95,(el/minDur)*0.95);const slow=el>minDur&&!engineDone;
     const target=(engineDone&&el>=minDur)?1:slow?Math.max(p,Math.min(0.95,engP)):paced;
     p+=(target-p)*0.10;render(p,slow?null:Math.max(0,minDur-el),engLabel);
+    if(state.cancelled){res();return;}
     if(engineDone&&el>=minDur&&p>0.995){p=1;render(1,0,"");res();}else requestAnimationFrame(tick);}tick();});
+  if(state.cancelled){stopHelix();hide("#converting");
+    const note=document.createElement("div");note.className="caveat clay";note.id="cancelNote";note.innerHTML='<div class="hint">Cancelled. Nothing was changed.</div>';
+    $("#optGrid").appendChild(note);logEvent("convert_"+state.fromExt+"_"+state.toExt+"_cancel");return;}
   await wait(500);stopHelix();hide("#converting");showResult(result,error,conv);
   logEvent("convert_"+state.fromExt+"_"+state.toExt+(error?"_fail":""));}
 function friendlyError(e){const m=(e&&e.message)||String(e||"");
-  if(/couldn't|password|No pages matched|no selectable text|empty file|stopped with code|can't write|Trim needs|trim end|too large/i.test(m))return m;
+  if(/couldn't|password|No pages matched|no selectable text|empty file|stopped with code|can't write|can't read|Trim needs|trim end|too large|Cancelled/i.test(m))return m;
   if(/Failed to fetch|NetworkError|Load failed|network/i.test(m))return "Squish couldn't download a conversion engine. Check your connection and try again.";
   if(/memory|allocation|RangeError/i.test(m))return "That file is too big to convert in this browser tab. Try a smaller file or a shorter clip.";
   return "Squish couldn't convert that file."+(m?" ("+m+")":"");}

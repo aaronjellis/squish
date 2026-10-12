@@ -75,7 +75,7 @@ async function run(){
   ok("png→jpg → raster engine", C.findConverter("png","jpg")?.engine==="raster");
   ok("svg→dxf → svgDxf engine", C.findConverter("svg","dxf")?.engine==="svgDxf");
   ok("png→png not offered (same format)", !C.possibleTargets("png").has("png"));
-  ok("pdf→pptx flagged 'planned'", C.possibleTargets("pdf").get("pptx")==="planned");
+  ok("pdf→pptx is available, svg→dwg is planned", C.possibleTargets("pdf").get("pptx")==="available" && C.possibleTargets("svg").get("dwg")==="planned");
   ok("pdf→mp4 is impossible (explained)", !!C.impossibleReason("pdf","mp4"));
   ok("png→webp has no impossible reason", !C.impossibleReason("png","webp"));
 
@@ -91,6 +91,16 @@ async function run(){
   const repng = await C.ENGINES.raster(png,{quality:90,resize:"1"},noP,"png");
   let dp = await decode(repng); ok("png→png round-trips and decodes", dp && dp.w===200, dp?`${dp.w}×${dp.h}`:"");
 
+  group("ICO and AVIF");
+  const icoBlob = await C.ENGINES.raster(png,{quality:90,resize:"1"},noP,"ico");
+  const icoHead = await head(icoBlob,6);
+  ok("png → ico has the ICO signature and five sizes for a 200px source", icoBlob.type==="image/x-icon"&&icoHead[0]===0&&icoHead[1]===0&&icoHead[2]===1&&icoHead[3]===0&&icoHead[4]===5, C.fmtBytes(icoBlob.size)+", count "+icoHead[4]);
+  let dIco = await decode(icoBlob);
+  ok("…and the browser decodes it", dIco && dIco.w>0, dIco?`${dIco.w}×${dIco.h}`:"undecodable");
+  const avifFx = await fx("fx.avif","image/avif");
+  const avifPng = await C.ENGINES.raster(avifFx,{quality:90,resize:"1"},noP,"png");
+  let dAv = await decode(avifPng);
+  ok("avif → png decodes (1×1 test image)", dAv && dAv.w===1 && dAv.h===1, dAv?`${dAv.w}×${dAv.h}`:"undecodable");
   group("SVG rasterizing");
   const svg = svgFile();
   const spng = await C.ENGINES.svgRaster(svg,{dpi:"150",quality:"90",bg:"transparent"},noP,"png");
@@ -118,9 +128,18 @@ async function run(){
   ok("page count reads /Count", (await C.detectPdfPages(scanPdf))===3, "got "+(await C.detectPdfPages(scanPdf)));
 
 
+  group("SVG → DXF: shapes, arcs, transforms");
+  let t, s;
+  const shapesSvg = await fx("shapes.svg","image/svg+xml");
+  t = await tryEngine("svgDxf",shapesSvg,{curveMode:"splines"},"dxf"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("rounded rect, circle, and arc emit splines (≥ 9)", (s.match(/\nSPLINE\n/g)||[]).length>=9, (s.match(/\nSPLINE\n/g)||[]).length+" splines"+(t.err?" "+t.err.message:""));
+  ok("circle inside the translated group lands at x≈160", /\n10\n160\n/.test(s), "");
+  ok("polygon gives 3 LINE entities", (s.match(/\nLINE\n/g)||[]).length>=3, (s.match(/\nLINE\n/g)||[]).length+" lines");
+  t = await tryEngine("svgDxf",new File(["<svg><rect"],"bad.svg",{type:"image/svg+xml"}),{},"dxf");
+  ok("invalid SVG fails with a plain message", t.err && /couldn't read this SVG/.test(t.err.message), String(t.err?.message));
   group("PDF → images (pdf.js)");
   const pdfFx = await fx("two-page.pdf","application/pdf");
-  let t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:""},"png");
+  t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:""},"png");
   ok("two pages return a zip with a .zip name", t.r && t.r.blob && t.r.name==="two-page.zip", t.err?String(t.err.message):t.r?.name);
   if(t.r && t.r.blob){const z=new Uint8Array(await t.r.blob.arrayBuffer());
     ok("zip has two central directory entries", countSig(z,[0x50,0x4b,0x01,0x02])===2, countSig(z,[0x50,0x4b,0x01,0x02])+" entries");}
@@ -138,7 +157,7 @@ async function run(){
   group("Documents (md, html, rtf, txt in; html, md, txt out)");
   const mdFx = await fx("short.md","text/markdown"), htmlFx = await fx("sample.html","text/html"),
         rtfFx = await fx("sample.rtf","application/rtf"), txtFx = await fx("sample.txt","text/plain");
-  t = await tryEngine("docs",mdFx,{},"html"); let s = t.r instanceof Blob ? await t.r.text() : "";
+  t = await tryEngine("docs",mdFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("md → html has heading, bold, link, lists", /<h1>Squish fixture<\/h1>/.test(s)&&/<strong>bold<\/strong>/.test(s)&&/<a href="https:\/\/example.com">link<\/a>/.test(s)&&/<ol>/.test(s)&&/<ul>/.test(s), t.err?String(t.err.message):"");
   ok("md → html keeps the code block and hr", /<pre><code>let x = 1;<\/code><\/pre>/.test(s)&&/<hr>/.test(s));
   t = await tryEngine("docs",mdFx,{},"md"); s = t.r instanceof Blob ? await t.r.text() : "";
@@ -153,8 +172,38 @@ async function run(){
   ok("rtf → html keeps bold", /<strong>bold<\/strong>/.test(s), t.err?String(t.err.message):"");
   t = await tryEngine("docs",txtFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("txt → html makes two paragraphs", (s.match(/<p>/g)||[]).length===2, t.err?String(t.err.message):"");
+  t = await tryEngine("docs",await fx("latin1.txt","text/plain"),{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("Latin-1 text decodes (accents and curly quotes)", s.includes("caf"+String.fromCharCode(0xe9))&&s.includes(String.fromCharCode(0x201c)+"quoted"+String.fromCharCode(0x201d)), t.err?String(t.err.message):s.slice(-80));
   t = await tryEngine("docs",new File([""],"empty.txt",{type:"text/plain"}),{},"html");
   ok("empty input fails clearly", t.err && /couldn't find any text/i.test(t.err.message), String(t.err?.message));
+  const tableFx = await fx("table.md","text/markdown");
+  t = await tryEngine("docs",tableFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("table.md → html has a thead, a nested list, and underline", s.includes("<thead>")&&s.includes("<ul>\n<li>top\n<ul>")&&s.includes("<u>underlined</u>"), t.err?String(t.err.message):s.slice(-300));
+  t = await tryEngine("docs",tableFx,{},"md"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("table.md → md has a pipe table and an indented item", s.includes("| --- | --- |")&&s.includes("| Ann | 34 |")&&s.includes("\n  - nested"), t.err?String(t.err.message):s);
+  t = await tryEngine("docs",tableFx,{},"docx");
+  ok("table.md → docx builds", t.r instanceof Blob && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
+  t = await tryEngine("docs",tableFx,{},"pdf");
+  if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"tb.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join(" ");await back.destroy();
+    ok("table.md → pdf draws the table cells and the nested item", /Name/.test(txt)&&/34/.test(txt)&&/nested/.test(txt), txt.slice(0,120));}
+  else ok("table.md → pdf draws the table cells and the nested item", false, String(t.err?.message));
+  const uniFx = await fx("unicode.md","text/markdown");
+  t = await tryEngine("docs",uniFx,{},"pdf");
+  if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"u.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join("");const ops=await pg.getOperatorList();const pdfjsLib=await C.loadLib("pdfjs");const imgs=ops.fnArray.filter(f=>f===pdfjsLib.OPS.paintImageXObject).length;await back.destroy();
+    ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", /Ωμέγα/.test(txt)&&/Привет/.test(txt)&&/naïve/.test(txt), txt.slice(0,80));
+    ok("…emoji and CJK are drawn as pictures, including emoji DejaVu has glyphs for (≥ 8 images)", imgs>=8, imgs+" images");
+    ok("…fonts were subset (under 400 KB)", t.r.size<400*1024, C.fmtBytes(t.r.size));
+    ok("…the font download was labeled", t.labels.some(l=>/fonts/.test(l)), t.labels.join(" | "));}
+  else { ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", false, String(t.err?.message)); }
+  t = await tryEngine("docs",txtFx,{},"pdf");
+  ok("plain ASCII pdf does not download fonts", t.r instanceof Blob && !t.labels.some(l=>/fonts/.test(l)), t.labels.join(" | "));
+  t = await tryEngine("docs",mdFx,{},"epub");
+  if(t.r instanceof Blob){const eb=new Uint8Array(await t.r.arrayBuffer());const es=new TextDecoder().decode(eb);
+    ok("md → epub is a zip with mimetype first", ascii(eb.subarray(0,2))==="PK" && es.slice(30,38)==="mimetype" && t.r.type==="application/epub+zip", C.fmtBytes(t.r.size));
+    const linkAt=es.indexOf('<link rel="stylesheet"');const chap=es.slice(es.lastIndexOf("<?xml",linkAt),es.indexOf("</html>",linkAt)+7);
+    const xdoc=new DOMParser().parseFromString(chap,"application/xhtml+xml");
+    ok("…and the chapter is well-formed XHTML", !xdoc.querySelector("parsererror") && xdoc.querySelector("h1")?.textContent==="Squish fixture", xdoc.querySelector("parsererror")?.textContent?.slice(0,100)||"");}
+  else { ok("md → epub is a zip with mimetype first", false, String(t.err?.message)); ok("…and the chapter is well-formed XHTML", false, ""); }
   t = await tryEngine("docs",mdFx,{},"docx");
   ok("md → docx is a zip (PK) over 2 KB", t.r instanceof Blob && t.r.size>2048 && ascii(await head(t.r,2))==="PK", t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
   ok("md → docx has the Word mime type", t.r?.type==="application/vnd.openxmlformats-officedocument.wordprocessingml.document");
@@ -169,6 +218,39 @@ async function run(){
   t = await tryEngine("docs",longTxt,{},"pdf");
   if(t.r instanceof Blob){const back = await C.openPdf(new File([t.r],"long.pdf",{type:"application/pdf"}),noP); ok("long txt → pdf breaks across pages", back.numPages>=2, back.numPages+" pages"); await back.destroy();}
   else ok("long txt → pdf breaks across pages", false, String(t.err?.message));
+  group("CSV and JSON");
+  t = await tryEngine("data",await fx("people.csv","text/csv"),{},"json"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("csv → json keeps the quoted comma", s.includes('"note": "likes tea, not coffee"'), t.err?String(t.err.message):s.slice(0,80));
+  t = await tryEngine("data",await fx("people.json","application/json"),{},"csv"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("json → csv has a header and two rows", s==="name,city,age\nAnn,Oslo,34\nBo,Lima,27\n", t.err?String(t.err.message):JSON.stringify(s));
+  group("HEIC, TIFF, and PSD input");
+  for(const [name,type] of [["fx.heic","image/heic"],["fx.tiff","image/tiff"],["fx.psd","image/vnd.adobe.photoshop"]]){
+    t = await tryEngine("imageDecode",await fx(name,type),{quality:"90",resize:"1"},"png");
+    const d = t.r instanceof Blob ? await decode(t.r) : null;
+    ok(name+" → png decodes to 48×32", d && d.w===48 && d.h===32, t.err?String(t.err.message):(d?`${d.w}×${d.h}`:"undecodable"));
+  }
+  t = await tryEngine("imageDecode",await fx("fx.heic","image/heic"),{quality:"80",resize:"0.5"},"jpg");
+  const dHeic = t.r instanceof Blob ? await decode(t.r) : null;
+  ok("heic → jpg honors resize and type", t.r?.type==="image/jpeg" && dHeic && dHeic.w===24, t.err?String(t.err.message):(dHeic?`${dHeic.w}×${dHeic.h}`:""));
+  t = await tryEngine("imageDecode",new File([new Uint8Array([1,2,3,4,5])],"bad.heic",{type:"image/heic"}),{},"png");
+  ok("a corrupt HEIC fails with a plain message", t.err && /couldn't/i.test(t.err.message), String(t.err?.message));
+  group("Meshes");
+  t = await tryEngine("mesh",await fx("cube.3mf","model/3mf"),{},"stl");
+  ok("deflated cube.3mf → binary stl of 12 triangles", t.r instanceof Blob && t.r.size===84+50*12, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
+  t = await tryEngine("mesh",await fx("cube.stl","model/stl"),{},"obj"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("cube.stl → obj has 8 vertices", (s.match(/^v /gm)||[]).length===8, t.err?String(t.err.message):"");
+  group("PDF → PowerPoint");
+  t = await tryEngine("pdfPptx",pdfFx,{dpi:"96",pages:""},"pptx");
+  if(t.r instanceof Blob){const pb=new Uint8Array(await t.r.arrayBuffer());const ps=new TextDecoder("latin1").decode(pb);
+    ok("two-page.pdf → pptx is a zip with two slides", ascii(pb.subarray(0,2))==="PK"&&ps.includes("ppt/slides/slide2.xml")&&!ps.includes("ppt/slides/slide3.xml")&&t.r.type.includes("presentationml"), C.fmtBytes(t.r.size));
+    ok("…and it carries the page images", ps.includes("ppt/media/"), "");}
+  else { ok("two-page.pdf → pptx is a zip with two slides", false, String(t.err?.message)); ok("…and it carries the page images", false, ""); }
+  group("Cancellation");
+  {const ac=new AbortController();ac.abort();
+   t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:"",signal:ac.signal},"png");
+   ok("pdfRaster rejects at once with an aborted signal", t.err && t.err.cancelled===true, String(t.err?.message||"no error"));
+   t = await tryEngine("docs",mdFx,{signal:ac.signal},"html");
+   ok("docs rejects with an aborted signal", t.err && t.err.cancelled===true, String(t.err?.message||"no error"));}
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
@@ -210,6 +292,21 @@ async function run(){
     ok("mp4 → mp3 extracts the audio", t.r instanceof Blob && (ascii(hd)==="ID3" || hd[0]===0xFF), t.err?String(t.err.message):"");
     t = await tryEngine("ffmpeg",mp4Fx,{target:"small",resolution:"keep",fps:"keep",trim:"0:00-0:00.5"},"mp4");
     ok("mp4 → mp4 with trim produces an MP4 (ftyp box)", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"opus");
+    ok("wav → opus starts with OggS", t.r instanceof Blob && ascii(await head(t.r,4))==="OggS", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"aac");
+    hd = t.r instanceof Blob ? await head(t.r,2) : new Uint8Array(2);
+    ok("wav → aac starts with an ADTS sync word", t.r instanceof Blob && hd[0]===0xFF && (hd[1]&0xF0)===0xF0, t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",mp4Fx,{target:"balanced",resolution:"keep",fps:"keep",trim:""},"mov");
+    ok("mp4 → mov has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp" && t.r.type==="video/quicktime", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",mp4Fx,{},"m4a");
+    ok("mp4 → m4a has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp", t.err?String(t.err.message):"");
+    // cancel mid-run, then convert again
+    {const ac=new AbortController();t={err:null,labels:[]};
+     try{await C.ENGINES.ffmpeg(wavFx,{quality:"85",signal:ac.signal},(f,l)=>{if(l==="loading your file")ac.abort();},"mp3");}catch(e){t.err=e;}
+     ok("cancelling an ffmpeg run reports a cancelled error", !!(t.err&&t.err.cancelled), String(t.err?.message||"finished before the abort"));
+     t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"mp3");
+     ok("the conversion after a cancel succeeds", t.r instanceof Blob && t.r.size>0, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));}
     // 4. a crashed engine must not wedge later conversions
     const ffBefore = await C.getFFmpeg(noP); const realExec = ffBefore.exec; ffBefore.exec = () => Promise.reject(new Error("simulated wasm abort"));
     t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"mp3");

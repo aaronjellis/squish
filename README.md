@@ -10,21 +10,32 @@ npm run serve
 ```
 
 Then open `http://localhost:8788/squish.html`. Opening `squish.html` from
-disk also works for images and SVG, but the document, PDF, and media engines
-need an http origin because they load modules from `vendor/`.
+disk also works for images and SVG, but the document, PDF, media, and other
+library-backed engines need an http origin because they load modules from
+`vendor/`.
 
 ## What it converts
 
 | From | To | Engine |
 | --- | --- | --- |
-| png, jpg, webp, bmp, gif | png, jpg, webp | canvas |
+| png, jpg, webp, bmp, gif, avif, ico | png, jpg, webp, ico | canvas |
+| heic, tiff, psd | png, jpg, webp | libheif, UTIF, ag-psd |
 | svg | png, jpg, webp | canvas |
-| svg | dxf | in-house emitter (splines or polylines) |
+| svg | dxf | in-house emitter (true splines, shapes, arcs, transforms) |
 | pdf | png, jpg | pdf.js |
 | pdf | docx | pdf.js text layer plus docx |
-| md, txt, html, rtf | pdf, docx, html, md, txt | marked, docx, pdf-lib |
-| mp4, mov, webm, avi, mkv | mp4, webm, gif, mp3 | ffmpeg.wasm |
-| mp3, wav, m4a, flac, ogg, aac | mp3, wav, m4a, flac, ogg | ffmpeg.wasm |
+| pdf | pptx | pdf.js pages as picture slides |
+| md, txt, html, rtf | pdf, docx, epub, html, md, txt | marked, docx, pdf-lib, in-house EPUB |
+| csv | json | in-house |
+| json | csv | in-house |
+| stl, obj, 3mf | stl, obj, 3mf | in-house |
+| mp4, mov, webm, avi, mkv | mp4, webm, mov, gif, mp3, m4a | ffmpeg.wasm |
+| mp3, wav, m4a, flac, ogg, aac, opus | mp3, wav, m4a, flac, ogg, opus, aac | ffmpeg.wasm |
+
+Documents keep headings, bold, italics, underline, links, nested lists,
+tables, quotes, and code blocks. PDFs embed a Unicode font when the text
+needs one. Emoji and other characters no font covers are drawn with your
+system font, so they look the way they do on your screen.
 
 ## Privacy
 
@@ -33,17 +44,23 @@ uploaded.
 
 The app makes two kinds of network request:
 
-- Its own files: the page, its scripts, and the libraries in `vendor/`.
+- Its own files: the page, its scripts, the libraries, and the fonts in
+  `vendor/`, each fetched only when a conversion needs it.
 - A one-time download of the ffmpeg engine (31 MB) from unpkg.com, the first
   time you convert video or audio.
 
 The format request button keeps its tally in your browser's local storage.
+Every conversion has a Cancel button.
 
 ## Known limits
 
-- PDF output uses the standard PDF fonts. Emoji and non-Latin scripts show
-  as `?`.
-- PDF to Word needs real, selectable text. Squish does not do OCR.
+- AVIF can be read but not written. Browsers don't expose an AVIF encoder.
+- PDF to Word and PDF to PowerPoint need real, selectable text. Squish does
+  not do OCR. Slides are pictures of the pages, not editable text.
+- Characters no bundled font covers (emoji, CJK) are pictures in PDF
+  output, so they aren't searchable there.
+- Mesh conversion is mesh to mesh. Colors, materials, textures, and
+  separate parts are merged or dropped.
 - Very large videos can run out of memory in a browser tab.
 
 ## Deploy it
@@ -57,7 +74,8 @@ same folder over http or https:
 - `vendor/`
 
 No special headers are needed. The single-threaded ffmpeg build works without
-cross-origin isolation.
+cross-origin isolation. Library licenses are listed in `vendor/VERSIONS.md`
+and shipped next to each library.
 
 ## Test it
 
@@ -72,10 +90,11 @@ include the ffmpeg tests, open it with `?ffmpeg=1`.
 ## Fixtures and vendored code
 
 ```bash
-npm run fixtures         # regenerate fixtures/ (needs ffmpeg for the mp4)
-npm run vendor           # re-download the pinned libraries
+npm run fixtures         # regenerate fixtures/ (needs ffmpeg and macOS sips for some)
+npm run vendor           # re-download the pinned libraries and fonts
 ```
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See `LICENSE`. Vendored libraries keep their own licenses, including
+libheif (LGPL-3.0, used unmodified as a separate file).
