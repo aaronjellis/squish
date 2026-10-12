@@ -534,6 +534,15 @@ section("Two-column PDFs");
  const indented=[[it2("Body line.",72,700),it2("Body line two.",72,684),it2("Body three.",72,668),it2("x",90,652),it2("Body four.",72,636)]];
  eq("a lone indented item does not count as a column", C.pdfTextToBlocks(indented).length, 1);}
 
+/* ---------- 28. Every format does something ---------- */
+section("Every format does something");
+{const used=new Set();C.CONVERTERS.filter(c=>c.status==="available").forEach(c=>{c.from.forEach(f=>used.add(C.norm(f)));c.to.forEach(t=>used.add(C.norm(t)));});
+ const allowed=new Set(["dwg","step","stp","iges","igs","zip","eps","ai"]);
+ const idle=Object.keys(C.FORMATS).filter(f=>!used.has(f)&&!allowed.has(f));
+ ok("every described format is used by a real converter"+(idle.length?" (idle: "+idle+")":""), idle.length===0);
+ ok("the only planned targets are dwg and step", C.CONVERTERS.filter(c=>c.status==="planned").every(c=>c.to.every(t=>["dwg","step","stl","3mf"].includes(t))));
+ eq("version is 1.1.0", require("./package.json").version, "1.1.0");}
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");

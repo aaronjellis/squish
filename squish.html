@@ -548,7 +548,7 @@ function updateEstimates(){
   else if(cat==="audio")factor=0.3;else if(t==="gif")factor=1.6;
   if(state.opts.resize){const s=parseFloat(state.opts.resize);factor*=s*s;}
   const est=Math.max(2048,inSize*factor);$("#estSize").textContent="~"+fmtBytes(est);
-  const weight={raster:.4,svgRaster:.5,svgDxf:.3,pdfRaster:2,docs:.5,pdfDocx:1.5,ffmpeg:12}[state.conv.engine]||1;
+  const weight={raster:.4,svgRaster:.5,svgDxf:.3,pdfRaster:2,docs:.5,pdfDocx:1.5,pdfPptx:2.5,imageDecode:1,data:.2,mesh:.5,ffmpeg:12}[state.conv.engine]||1;
   let secs=(inSize/1048576)*weight/benchScore+0.5;secs=Math.min(secs,cat==="video"?180:30);
   $("#estTime").textContent=secs<1?"<1 sec":secs<60?Math.ceil(secs)+" sec":Math.ceil(secs/60)+" min";state._estSecs=secs;
 }

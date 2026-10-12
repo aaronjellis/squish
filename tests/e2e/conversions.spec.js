@@ -78,3 +78,20 @@ test("app: cancel returns to the options and the next convert works",async({page
   await page.locator("#convertBtn").click();
   await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:120000});
 });
+
+test("app: csv to json downloads people.json",async({page})=>{
+  const r=await convert(page,"people.csv","json");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("JSON");
+  const [dl]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:/Download/}).click()]);
+  expect(dl.suggestedFilename()).toBe("people.json");
+});
+
+test("app: heic to png",async({page})=>{
+  const r=await convert(page,"fx.heic","png");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("PNG");
+});
+
+test("app: md to epub",async({page})=>{
+  const r=await convert(page,"short.md","epub");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("EPUB");
+});

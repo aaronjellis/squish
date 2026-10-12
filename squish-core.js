@@ -35,7 +35,6 @@
     rtf:{name:"Rich text",cat:"doc",desc:"Basic formatted text that opens in almost any word processor."},
     epub:{name:"EPUB e-book",cat:"doc",desc:"Reflowable e-book for e-readers and phones."},
     pptx:{name:"PowerPoint",cat:"doc",desc:"Editable slide presentation."},
-    xlsx:{name:"Excel sheet",cat:"doc",desc:"Spreadsheet with formulas, tables, and charts."},
     csv:{name:"CSV data",cat:"doc",desc:"Plain-text table. The universal way to move data between apps."},
     json:{name:"JSON data",cat:"doc",desc:"Structured data used by apps and APIs."},
     dxf:{name:"DXF drawing",cat:"cad",desc:"2D CAD exchange format. Best for getting line & curve geometry into Onshape or Fusion."},
