@@ -91,6 +91,16 @@ async function run(){
   const repng = await C.ENGINES.raster(png,{quality:90,resize:"1"},noP,"png");
   let dp = await decode(repng); ok("png→png round-trips and decodes", dp && dp.w===200, dp?`${dp.w}×${dp.h}`:"");
 
+  group("ICO and AVIF");
+  const icoBlob = await C.ENGINES.raster(png,{quality:90,resize:"1"},noP,"ico");
+  const icoHead = await head(icoBlob,6);
+  ok("png → ico has the ICO signature and five sizes for a 200px source", icoBlob.type==="image/x-icon"&&icoHead[0]===0&&icoHead[1]===0&&icoHead[2]===1&&icoHead[3]===0&&icoHead[4]===5, C.fmtBytes(icoBlob.size)+", count "+icoHead[4]);
+  let dIco = await decode(icoBlob);
+  ok("…and the browser decodes it", dIco && dIco.w>0, dIco?`${dIco.w}×${dIco.h}`:"undecodable");
+  const avifFx = await fx("fx.avif","image/avif");
+  const avifPng = await C.ENGINES.raster(avifFx,{quality:90,resize:"1"},noP,"png");
+  let dAv = await decode(avifPng);
+  ok("avif → png decodes (1×1 test image)", dAv && dAv.w===1 && dAv.h===1, dAv?`${dAv.w}×${dAv.h}`:"undecodable");
   group("SVG rasterizing");
   const svg = svgFile();
   const spng = await C.ENGINES.svgRaster(svg,{dpi:"150",quality:"90",bg:"transparent"},noP,"png");

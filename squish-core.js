@@ -71,10 +71,11 @@
 
   /* ---------- Converter registry: add an entry, get a feature ---------- */
   const CONVERTERS = [
-    {from:["png","jpg","jpeg","webp","bmp","gif"], to:["png","jpg","webp"], engine:"raster", status:"available",
+    {from:["png","jpg","jpeg","webp","bmp","gif","avif","ico"], to:["png","jpg","webp","ico"], engine:"raster", status:"available",
      options:[optQuality, optResizeAdv],
      caveats:["JPEG and WebP are lossy. Below 70% you'll start to see artifacts.",
-              "Transparency disappears when converting to JPEG (it fills with white)."]},
+              "Transparency disappears when converting to JPEG (it fills with white).",
+              "An ICO holds square copies at 16 to 256 px. Larger images are scaled down."]},
     {from:["svg"], to:["png","jpg","webp"], engine:"svgRaster", status:"available",
      options:[optDpiSimple(), optQuality, {key:"bg",label:"Background",type:"seg",advanced:true,
        choices:[["transparent","Transparent"],["white","White"]],def:"transparent",
@@ -152,6 +153,15 @@
     return [...out].sort((x,y)=>x-y);
   }
 
+  /* ---------- ICO container (PNG entries) ---------- */
+  function icoFromPngs(entries){
+    const dir=6+16*entries.length,total=dir+entries.reduce((n,e)=>n+e.png.length,0),out=new Uint8Array(total),v=new DataView(out.buffer);
+    v.setUint16(0,0,true);v.setUint16(2,1,true);v.setUint16(4,entries.length,true);
+    let off=dir;entries.forEach((e,i)=>{const p=6+16*i;out[p]=e.w>=256?0:e.w;out[p+1]=e.h>=256?0:e.h;out[p+2]=0;out[p+3]=0;
+      v.setUint16(p+4,1,true);v.setUint16(p+6,32,true);v.setUint32(p+8,e.png.length,true);v.setUint32(p+12,off,true);out.set(e.png,off);off+=e.png.length;});
+    return out;
+  }
+
   /* ---------- Store-only zip writer (no dependency) ---------- */
   const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
   function crc32(bytes){let c=0xFFFFFFFF;for(let i=0;i<bytes.length;i++)c=CRC_TABLE[(c^bytes[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
@@ -196,12 +206,21 @@
      replaces at load time in the browser. */
   function loadImage(src){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src;});}
   function canvasBlob(c,mime,q){return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error("That image is too large for this browser to draw. Try a smaller size or a lower sharpness setting.")),mime,q));}
-  function mimeFor(ext){return ext==="jpg"?"image/jpeg":ext==="webp"?"image/webp":"image/png";}
+  function mimeFor(ext){return ext==="jpg"?"image/jpeg":ext==="webp"?"image/webp":ext==="ico"?"image/x-icon":"image/png";}
   function notLoaded(){return Promise.reject(new Error("squish-engines.js is not loaded, so this converter is unavailable."));}
 
   const ENGINES = {
     async raster(file,opts,onP,toExt){
       const img=await loadImage(URL.createObjectURL(file));onP(.4);
+      if(toExt==="ico"){
+        const max=Math.max(img.width,img.height);let sizes=[16,32,48,64,128,256].filter(z=>z<=max);if(!sizes.length)sizes=[Math.min(256,max)];
+        const entries=[];
+        for(const z of sizes){const c=document.createElement("canvas");c.width=z;c.height=z;const ctx=c.getContext("2d");
+          const k=z/max,w=Math.max(1,Math.round(img.width*k)),h=Math.max(1,Math.round(img.height*k));
+          ctx.drawImage(img,Math.round((z-w)/2),Math.round((z-h)/2),w,h);
+          entries.push({w:z,h:z,png:new Uint8Array(await (await canvasBlob(c,"image/png")).arrayBuffer())});}
+        onP(.9);return new Blob([icoFromPngs(entries)],{type:"image/x-icon"});
+      }
       const scale=parseFloat(opts.resize||"1");
       const c=document.createElement("canvas");c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));
       const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
@@ -653,7 +672,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,icoFromPngs,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};

@@ -427,6 +427,18 @@ ok("video to m4a drops the video", (a=>a.includes("-vn")&&a.includes("aac"))(A("
 eq("mime for mov, opus, aac", [C.MEDIA_MIME.mov,C.MEDIA_MIME.opus,C.MEDIA_MIME.aac].join("|"), "video/quicktime|audio/ogg|audio/aac");
 ok("registry offers mov and m4a from video, opus and aac from audio", C.findConverter("mp4","mov")?.engine==="ffmpeg"&&C.findConverter("mov","m4a")?.engine==="ffmpeg"&&C.findConverter("wav","opus")?.engine==="ffmpeg"&&C.findConverter("mp3","aac")?.engine==="ffmpeg");
 
+/* ---------- 20. ICO ---------- */
+section("ICO");
+const png1=new Uint8Array([0x89,0x50,0x4e,0x47,1,2,3]),png2=new Uint8Array([0x89,0x50,0x4e,0x47,9,8]);
+const ico=C.icoFromPngs([{w:16,h:16,png:png1},{w:256,h:256,png:png2}]);
+const iv=new DataView(ico.buffer);
+ok("ICONDIR header: reserved 0, type 1, count 2", iv.getUint16(0,true)===0&&iv.getUint16(2,true)===1&&iv.getUint16(4,true)===2);
+ok("entry 1: 16x16, size and offset point at the png", ico[6]===16&&ico[7]===16&&iv.getUint32(14,true)===7&&iv.getUint32(18,true)===6+32);
+ok("entry 2: 256 is written as 0", ico[22]===0&&ico[23]===0&&iv.getUint32(34,true)===6+32+7);
+ok("png bytes follow the directory in order", ico[38]===0x89&&ico[6+32+7]===0x89);
+ok("raster accepts avif and ico, and writes ico", C.findConverter("avif","png")?.engine==="raster"&&C.findConverter("ico","png")?.engine==="raster"&&C.findConverter("png","ico")?.engine==="raster");
+eq("mime for ico", C.mimeFor("ico"), "image/x-icon");
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
