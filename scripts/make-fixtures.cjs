@@ -70,6 +70,8 @@ write("sample.html",`<!doctype html><html><head><title>Sample</title><style>p{co
 write("sample.rtf",String.raw`{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Helvetica;}}\f0\fs24 Hello {\b bold} world\par Second \'e9 paragraph\par}`);
 write("sample.txt","First paragraph of plain text.\n\nSecond paragraph.\n");
 write("latin1.txt",Buffer.from("caf\xe9 \x93quoted\x94\n","latin1"));
+write("people.csv",'name,city,note\nAnn,Oslo,"likes tea, not coffee"\nBo,Lima,\n');
+write("people.json",JSON.stringify([{name:"Ann",city:"Oslo",age:34},{name:"Bo",city:"Lima",age:27}],null,2)+"\n");
 write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
 <g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
 <polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>

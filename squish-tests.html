@@ -180,6 +180,11 @@ async function run(){
   t = await tryEngine("docs",longTxt,{},"pdf");
   if(t.r instanceof Blob){const back = await C.openPdf(new File([t.r],"long.pdf",{type:"application/pdf"}),noP); ok("long txt → pdf breaks across pages", back.numPages>=2, back.numPages+" pages"); await back.destroy();}
   else ok("long txt → pdf breaks across pages", false, String(t.err?.message));
+  group("CSV and JSON");
+  t = await tryEngine("data",await fx("people.csv","text/csv"),{},"json"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("csv → json keeps the quoted comma", s.includes('"note": "likes tea, not coffee"'), t.err?String(t.err.message):s.slice(0,80));
+  t = await tryEngine("data",await fx("people.json","application/json"),{},"csv"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("json → csv has a header and two rows", s==="name,city,age\nAnn,Oslo,34\nBo,Lima,27\n", t.err?String(t.err.message):JSON.stringify(s));
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

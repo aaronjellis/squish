@@ -94,6 +94,8 @@
      options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to export every page."}],
      caveats:["Each page becomes its own image."]},
     {from:["md","txt","html","rtf"], to:["pdf","docx","html","md","txt"], engine:"docs", status:"available", options:[], caveats:[]},
+    {from:["csv"], to:["json"], engine:"data", status:"available", options:[], caveats:["The first row becomes the field names. Numbers and true/false are converted."]},
+    {from:["json"], to:["csv"], engine:"data", status:"available", options:[], caveats:["Needs an array of objects or rows. Nested objects are written as JSON text inside the cell."]},
     {from:["pdf"], to:["docx"], engine:"pdfDocx", status:"available", options:[],
      caveats:["⚠ Only works well for PDFs that already have real, selectable text.",
               "If it's scanned pages or pictures of text, Squish can't make it editable. We don't do OCR (that would mean uploading your file).",
@@ -218,6 +220,12 @@
     async svgDxf(file,opts,onP){const txt=await file.text();onP(.3);
       const dxf=api.svgToDxf(txt,opts.curveMode||"splines",parseFloat(opts.tolerance||"0.5"));onP(.9);
       return new Blob([dxf],{type:"application/dxf"});},
+    async data(file,opts,onP,toExt){
+      const text=decodeText(new Uint8Array(await file.arrayBuffer()));onP(0.5,"reading the data");
+      if(toExt==="json")return new Blob([csvToJson(text)],{type:"application/json"});
+      if(toExt==="csv")return new Blob([jsonToCsv(text)],{type:"text/csv"});
+      throw new Error("Squish can't write ."+toExt+" from this file.");
+    },
     pdfRaster:notLoaded,
     docs:notLoaded,
     pdfDocx:notLoaded,
@@ -364,6 +372,42 @@
     if(bytes[0]===0xFE&&bytes[1]===0xFF)return new TextDecoder("utf-16be").decode(bytes.subarray(2));
     try{return new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
     catch(e){return decode1252(bytes);}
+  }
+
+  /* ---------- CSV and JSON ---------- */
+  function detectDelimiter(line){
+    const counts={",":0,";":0,"\t":0,"|":0};let q=false;
+    for(const ch of line){if(ch==='"')q=!q;else if(!q&&ch in counts)counts[ch]++;}
+    const best=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];return best[1]?best[0]:",";
+  }
+  function parseCsv(text){
+    const s=String(text||"").replace(/^\uFEFF/,"");if(!s.trim())return [];
+    const d=detectDelimiter(s.split(/\r?\n/)[0]);const rows=[];let row=[],cell="",q=false,i=0;
+    while(i<s.length){const ch=s[i];
+      if(q){if(ch==='"'){if(s[i+1]==='"'){cell+='"';i+=2;continue;}q=false;i++;continue;}cell+=ch;i++;continue;}
+      if(ch==='"'){q=true;i++;continue;}
+      if(ch===d){row.push(cell);cell="";i++;continue;}
+      if(ch==="\r"){i++;continue;}
+      if(ch==="\n"){row.push(cell);rows.push(row);row=[];cell="";i++;continue;}
+      cell+=ch;i++;}
+    if(cell!==""||row.length){row.push(cell);rows.push(row);}
+    return rows.filter(r=>r.length>1||r[0]!=="");
+  }
+  function csvCell(v){if(v==null)return "";const t=typeof v==="object"?JSON.stringify(v):String(v);return /[",\r\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;}
+  function toCsv(rows){return rows.map(r=>r.map(csvCell).join(",")).join("\n")+"\n";}
+  function csvValue(t){if(t==="")return "";if(/^-?\d+(\.\d+)?$/.test(t))return Number(t);if(t==="true")return true;if(t==="false")return false;return t;}
+  function csvToJson(text){
+    const rows=parseCsv(text);if(!rows.length)return "[]\n";const head=rows[0];
+    return JSON.stringify(rows.slice(1).map(r=>{const o={};head.forEach((h,i)=>{o[h||("col"+(i+1))]=csvValue(r[i]==null?"":r[i]);});return o;}),null,2)+"\n";
+  }
+  function jsonToCsv(text){
+    let v;try{v=JSON.parse(text);}catch(e){throw new Error("That file isn't valid JSON. "+e.message);}
+    const findArray=x=>{if(Array.isArray(x))return x;if(x&&typeof x==="object"){for(const k of Object.keys(x)){const a=findArray(x[k]);if(a)return a;}}return null;};
+    const arr=findArray(v);if(!arr)throw new Error("Squish needs a JSON array (or an object containing one) to make a CSV.");
+    if(!arr.length)return "\n";
+    if(arr.every(Array.isArray))return toCsv(arr);
+    const keys=[];arr.forEach(o=>{if(o&&typeof o==="object"&&!Array.isArray(o))Object.keys(o).forEach(k=>{if(!keys.includes(k))keys.push(k);});});
+    return toCsv([keys,...arr.map(o=>keys.map(k=>o&&typeof o==="object"?o[k]:""))]);
   }
 
   /* ---------- Document block model ----------
@@ -606,7 +650,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,decodeText,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};

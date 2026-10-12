@@ -399,6 +399,25 @@ eq("utf-16le BOM decodes", C.decodeText(u8([0xff,0xfe,0x68,0x00,0x69,0x00])), "h
 eq("utf-16be BOM decodes", C.decodeText(u8([0xfe,0xff,0x00,0x68,0x00,0x69])), "hi");
 eq("empty input is empty", C.decodeText(u8([])), "");
 
+/* ---------- 18. CSV and JSON ---------- */
+section("CSV and JSON");
+eq("simple rows", JSON.stringify(C.parseCsv("a,b\n1,2\n")), '[["a","b"],["1","2"]]');
+eq("quoted comma, escaped quote, newline in quotes", JSON.stringify(C.parseCsv('x,y\r\n"a, b","say ""hi""\nthere"')), '[["x","y"],["a, b","say \\"hi\\"\\nthere"]]');
+eq("semicolon delimiter is detected", JSON.stringify(C.parseCsv("a;b\n1;2")), '[["a","b"],["1","2"]]');
+eq("tab delimiter is detected", JSON.stringify(C.parseCsv("a\tb\n1\t2")), '[["a","b"],["1","2"]]');
+eq("toCsv quotes only what needs it", C.toCsv([["a","b, c",'q"'],[1,true,null]]), 'a,"b, c","q"""\n1,true,\n');
+const jj=JSON.parse(C.csvToJson("name,age,ok\nAnn,34,true\nBo,,false\n"));
+eq("csvToJson uses the header and converts numbers and booleans", JSON.stringify(jj), '[{"name":"Ann","age":34,"ok":true},{"name":"Bo","age":"","ok":false}]');
+eq("jsonToCsv from an array of objects unions the keys", C.jsonToCsv('[{"a":1,"b":"x"},{"b":"y","c":true}]'), "a,b,c\n1,x,\n,y,true\n");
+eq("jsonToCsv from an array of arrays", C.jsonToCsv('[["h1","h2"],[1,2]]'), "h1,h2\n1,2\n");
+eq("jsonToCsv finds the first array inside an object", C.jsonToCsv('{"meta":1,"rows":[{"a":1}]}'), "a\n1\n");
+ok("jsonToCsv rejects a scalar", (()=>{try{C.jsonToCsv("42");return false;}catch(e){return /array/.test(e.message);}})());
+ok("csv and json converters are registered", C.findConverter("csv","json")?.engine==="data"&&C.findConverter("json","csv")?.engine==="data");
+(async()=>{const b=await C.ENGINES.data(new File(["a,b\n1,2"],"t.csv"),{},()=>{},"json");const txt=await b.text();
+  ok("data engine csv to json returns JSON with numbers", b.type==="application/json"&&txt.includes('"a": 1'));
+  const c=await C.ENGINES.data(new File(['[{"x":"y, z"}]'],"t.json"),{},()=>{},"csv");
+  eq("data engine json to csv quotes commas", await c.text(), 'x\n"y, z"\n');})();
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
