@@ -669,19 +669,35 @@
     out+=(base&&base!==ch&&[...base].every(ok))?base:"?";}return out;}
 
   /* ---------- PDF text items -> blocks (lines by y, paragraphs by gap, headings by size) ---------- */
+  // Two-column pages: find the widest vertical strip in the middle of the page that no text
+  // item covers. If each side has text, read the left column first, then the right.
+  function splitColumns(items){
+    if(items.length<6)return null;
+    const minX=Math.min(...items.map(i=>i.x)),maxX=Math.max(...items.map(i=>i.x+i.width)),pageW=maxX-minX;
+    if(pageW<=0)return null;
+    const iv=items.map(i=>[i.x,i.x+i.width]).sort((a,b)=>a[0]-b[0]);const gaps=[];let end=iv[0][1];
+    for(let k=1;k<iv.length;k++){if(iv[k][0]>end+0.5)gaps.push([end,iv[k][0]]);end=Math.max(end,iv[k][1]);}
+    const mid=gaps.filter(g=>{const c=(g[0]+g[1])/2;return c>minX+0.3*pageW&&c<minX+0.7*pageW;}).sort((a,b)=>(b[1]-b[0])-(a[1]-a[0]))[0];
+    if(!mid||mid[1]-mid[0]<0.04*pageW)return null;
+    const split=(mid[0]+mid[1])/2,left=items.filter(i=>i.x<split),right=items.filter(i=>i.x>=split);
+    return left.length>=3&&right.length>=3?[left,right]:null;
+  }
   function pdfTextToBlocks(pages){
     const lines=[];
     pages.forEach((items,pi)=>{
       const its=(items||[]).filter(t=>t.str&&t.str.trim()).map(t=>({...t,size:t.size||10,width:t.width||0}));
-      its.sort((a,b)=>(b.y-a.y)||(a.x-b.x));
-      let line=null;
-      its.forEach(t=>{
-        const tol=Math.max(2,t.size*0.5);
-        if(line&&Math.abs(line.y-t.y)<=tol){
-          const gap=t.x-line.xEnd;
-          if(gap>t.size*0.15&&!/\s$/.test(line.text)&&!/^\s/.test(t.str))line.text+=" ";
-          line.text+=t.str;line.xEnd=Math.max(line.xEnd,t.x+t.width);line.size=Math.max(line.size,t.size);
-        }else{line={text:t.str,size:t.size,y:t.y,xEnd:t.x+t.width,page:pi};lines.push(line);}
+      const groups=splitColumns(its)||[its];
+      groups.forEach((group,gi)=>{
+        group.sort((a,b)=>(b.y-a.y)||(a.x-b.x));
+        let line=null,first=true;
+        group.forEach(t=>{
+          const tol=Math.max(2,t.size*0.5);
+          if(line&&Math.abs(line.y-t.y)<=tol){
+            const gap=t.x-line.xEnd;
+            if(gap>t.size*0.15&&!/\s$/.test(line.text)&&!/^\s/.test(t.str))line.text+=" ";
+            line.text+=t.str;line.xEnd=Math.max(line.xEnd,t.x+t.width);line.size=Math.max(line.size,t.size);
+          }else{line={text:t.str,size:t.size,y:t.y,x:t.x,xEnd:t.x+t.width,page:pi,colBreak:gi>0&&first};first=false;lines.push(line);}
+        });
       });
     });
     if(!lines.length)return [];
@@ -689,7 +705,7 @@
     const paras=[];let para=null;
     lines.forEach((l,i)=>{
       const prev=lines[i-1];
-      const fresh=!prev||prev.page!==l.page||(prev.y-l.y)>l.size*1.8||Math.abs(prev.size-l.size)>body*0.15;
+      const fresh=!prev||prev.page!==l.page||l.colBreak||(prev.y-l.y)>l.size*1.8||Math.abs(prev.size-l.size)>body*0.15;
       if(fresh){para={lines:[l],size:l.size};paras.push(para);}else{para.lines.push(l);para.size=Math.max(para.size,l.size);}
     });
     return paras.map(p=>{

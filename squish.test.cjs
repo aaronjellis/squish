@@ -522,6 +522,18 @@ ok("throwIfAborted throws a cancelled error for an aborted signal", (()=>{const 
   try{await C.ENGINES.mesh(new File([C.toStl({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]})],"t.stl"),{signal:ac.signal},()=>{},"obj");msg="";}catch(e){msg=e.message;}
   ok("the mesh engine honors an aborted signal", /Cancelled/.test(msg), msg);})();
 
+/* ---------- 27. Two-column PDFs ---------- */
+section("Two-column PDFs");
+{const it2=(str,x,y)=>({str,x,y,size:11,width:200});
+ const twoCol=[[it2("Left one.",72,700),it2("Right one.",330,700),it2("Left two.",72,684),it2("Right two.",330,684),it2("Left three.",72,668),it2("Right three.",330,668),it2("Left four.",72,652),it2("Right four.",330,652)]];
+ const text=C.pdfTextToBlocks(twoCol).map(b=>C.runsText(b.runs)).join(" | ");
+ ok("two columns read down the left column, then the right", text.startsWith("Left one. Left two. Left three. Left four.")&&/Right one\. Right two\. Right three\. Right four\./.test(text), text);
+ ok("the column break starts a new paragraph", C.pdfTextToBlocks(twoCol).length===2, C.pdfTextToBlocks(twoCol).length+" blocks");
+ const oneCol=[[it2("A line that spans.",72,700),it2("Another full line.",72,684),it2("Third.",72,668),it2("Fourth.",72,652)]];
+ eq("a single column is unchanged", C.pdfTextToBlocks(oneCol).map(b=>C.runsText(b.runs)).join("|"), "A line that spans. Another full line. Third. Fourth.");
+ const indented=[[it2("Body line.",72,700),it2("Body line two.",72,684),it2("Body three.",72,668),it2("x",90,652),it2("Body four.",72,636)]];
+ eq("a lone indented item does not count as a column", C.pdfTextToBlocks(indented).length, 1);}
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
