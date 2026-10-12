@@ -854,6 +854,18 @@
     return o;
   }
 
+  /* ---------- Vote summary: local tallies merged with server totals ---------- */
+  // requests: {"svg→dwg": n} from this browser; stats: {"input_png": n, ...}; server: [{from,to,count}] or null.
+  function summarizeVotes(requests,stats,server){
+    const ARROW=String.fromCharCode(0x2192),rows=new Map();
+    (server||[]).forEach(v=>{if(v&&v.from&&v.to)rows.set(v.from+ARROW+v.to,{from:v.from,to:v.to,count:+v.count||0,mine:0});});
+    Object.entries(requests||{}).forEach(([pair,n])=>{const [from,to]=pair.split(ARROW);if(!from||!to)return;
+      const r=rows.get(pair);if(r)r.mine=+n||0;else rows.set(pair,{from,to,count:+n||0,mine:+n||0});});
+    const requested=[...rows.values()].sort((a,b)=>(b.count-a.count)||(b.mine-a.mine)||(a.from+a.to).localeCompare(b.from+b.to));
+    const dropped=Object.entries(stats||{}).filter(([k])=>k.startsWith("input_")).map(([k,n])=>({ext:k.slice(6),count:+n||0})).sort((a,b)=>(b.count-a.count)||a.ext.localeCompare(b.ext));
+    return {requested,dropped};
+  }
+
   /* ---------- PDF heuristics (no OCR, just guidance) ---------- */
   async function detectImagePdf(file){try{const buf=new Uint8Array(await file.slice(0,Math.min(file.size,2e6)).arrayBuffer());
     let s="";for(let i=0;i<buf.length;i++)s+=String.fromCharCode(buf[i]);
@@ -870,7 +882,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,throwIfAborted,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,throwIfAborted,summarizeVotes,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};
