@@ -226,6 +226,15 @@ async function run(){
     ok("mp4 → mp3 extracts the audio", t.r instanceof Blob && (ascii(hd)==="ID3" || hd[0]===0xFF), t.err?String(t.err.message):"");
     t = await tryEngine("ffmpeg",mp4Fx,{target:"small",resolution:"keep",fps:"keep",trim:"0:00-0:00.5"},"mp4");
     ok("mp4 → mp4 with trim produces an MP4 (ftyp box)", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"opus");
+    ok("wav → opus starts with OggS", t.r instanceof Blob && ascii(await head(t.r,4))==="OggS", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"aac");
+    hd = t.r instanceof Blob ? await head(t.r,2) : new Uint8Array(2);
+    ok("wav → aac starts with an ADTS sync word", t.r instanceof Blob && hd[0]===0xFF && (hd[1]&0xF0)===0xF0, t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",mp4Fx,{target:"balanced",resolution:"keep",fps:"keep",trim:""},"mov");
+    ok("mp4 → mov has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp" && t.r.type==="video/quicktime", t.err?String(t.err.message):"");
+    t = await tryEngine("ffmpeg",mp4Fx,{},"m4a");
+    ok("mp4 → m4a has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp", t.err?String(t.err.message):"");
     // 4. a crashed engine must not wedge later conversions
     const ffBefore = await C.getFFmpeg(noP); const realExec = ffBefore.exec; ffBefore.exec = () => Promise.reject(new Error("simulated wasm abort"));
     t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"mp3");

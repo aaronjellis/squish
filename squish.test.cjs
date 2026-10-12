@@ -418,6 +418,15 @@ ok("csv and json converters are registered", C.findConverter("csv","json")?.engi
   const c=await C.ENGINES.data(new File(['[{"x":"y, z"}]'],"t.json"),{},()=>{},"csv");
   eq("data engine json to csv quotes commas", await c.text(), 'x\n"y, z"\n');})();
 
+/* ---------- 19. More ffmpeg outputs ---------- */
+section("More ffmpeg outputs");
+ok("mov output uses h264 in a mov container", (a=>a.includes("libx264")&&a[a.indexOf("-f")+1]==="mov")(A("mp4","mov",{})));
+ok("opus output caps the bitrate at 256k with vbr", (a=>a.includes("libopus")&&a[a.indexOf("-b:a")+1]==="256k"&&a.includes("-vbr"))(A("wav","opus",{quality:"95"})));
+ok("aac output is raw ADTS", (a=>a.includes("aac")&&a[a.indexOf("-f")+1]==="adts")(A("wav","aac",{})));
+ok("video to m4a drops the video", (a=>a.includes("-vn")&&a.includes("aac"))(A("mp4","m4a",{})));
+eq("mime for mov, opus, aac", [C.MEDIA_MIME.mov,C.MEDIA_MIME.opus,C.MEDIA_MIME.aac].join("|"), "video/quicktime|audio/ogg|audio/aac");
+ok("registry offers mov and m4a from video, opus and aac from audio", C.findConverter("mp4","mov")?.engine==="ffmpeg"&&C.findConverter("mov","m4a")?.engine==="ffmpeg"&&C.findConverter("wav","opus")?.engine==="ffmpeg"&&C.findConverter("mp3","aac")?.engine==="ffmpeg");
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");

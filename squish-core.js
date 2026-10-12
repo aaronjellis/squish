@@ -100,7 +100,7 @@
      caveats:["⚠ Only works well for PDFs that already have real, selectable text.",
               "If it's scanned pages or pictures of text, Squish can't make it editable. We don't do OCR (that would mean uploading your file).",
               "Exact fonts and layout are often lost going PDF → Word."]},
-    {from:["mp4","mov","webm","avi","mkv"], to:["mp4","webm","gif","mp3"], engine:"ffmpeg", status:"available",
+    {from:["mp4","mov","webm","avi","mkv"], to:["mp4","webm","mov","gif","mp3","m4a"], engine:"ffmpeg", status:"available",
      options:[
        {key:"target",label:"Optimize for",type:"select",choices:[["balanced","Balanced (recommended)"],["small","Smallest file"],["quality","Best quality"]],def:"balanced",
         hint:"We pick the right settings so it looks good without bloating the file."},
@@ -112,7 +112,7 @@
         hint:"Frames per second. Lower trims size. Great for GIFs."},
        {key:"trim",label:"Trim to a clip",type:"text",advanced:true,def:"",placeholder:"e.g. 0:05-0:12",hint:"Clip to just the part you want (used for video → GIF too)."},
      ], caveats:["Runs entirely on your device, so a long video takes a while. The first conversion downloads a 31 MB engine."]},
-    {from:["mp3","wav","m4a","flac","ogg","aac"], to:["mp3","wav","m4a","flac","ogg"], engine:"ffmpeg", status:"available",
+    {from:["mp3","wav","m4a","flac","ogg","aac","opus"], to:["mp3","wav","m4a","flac","ogg","opus","aac"], engine:"ffmpeg", status:"available",
      options:[optQuality,
        {key:"samplerate",label:"Sample rate",type:"select",advanced:true,choices:[["keep","Keep original"],["48000","48 kHz"],["44100","44.1 kHz (CD)"],["22050","22 kHz"]],def:"keep",hint:"Audio samples per second."},
        {key:"channels",label:"Channels",type:"select",advanced:true,choices:[["keep","Keep original"],["2","Stereo"],["1","Mono (smaller)"]],def:"keep",hint:"Mono roughly halves most files."}],
@@ -593,7 +593,7 @@
     return "Trim needs a start and end like m:ss-m:ss, for example 0:05-0:12.";
   }
   function audioKbps(q){q=parseInt(q||85,10);return q>=90?320:q>=75?256:q>=60?192:q>=50?128:96;}
-  const MEDIA_MIME={mp4:"video/mp4",webm:"video/webm",gif:"image/gif",mp3:"audio/mpeg",wav:"audio/wav",m4a:"audio/mp4",flac:"audio/flac",ogg:"audio/ogg"};
+  const MEDIA_MIME={mp4:"video/mp4",webm:"video/webm",mov:"video/quicktime",gif:"image/gif",mp3:"audio/mpeg",wav:"audio/wav",m4a:"audio/mp4",flac:"audio/flac",ogg:"audio/ogg",opus:"audio/ogg",aac:"audio/aac"};
   function ffmpegArgs(fromExt,toExt,opts,inName,outName){
     opts=opts||{};const args=[];
     const trim=parseTrim(opts.trim);
@@ -607,14 +607,15 @@
     if(toExt==="gif"){
       const chain=["fps="+(fps||"12")];if(scale)chain.push(scale+":flags=lanczos");
       args.push("-an","-vf",chain.join(",")+",split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse","-loop","0");
-    }else if(toExt==="mp4"||toExt==="webm"){
+    }else if(toExt==="mp4"||toExt==="mov"||toExt==="webm"){
       if(scale)args.push("-vf",scale);
-      else if(toExt==="mp4")args.push("-vf","scale=trunc(iw/2)*2:trunc(ih/2)*2"); // yuv420p needs even dimensions
+      else if(toExt!=="webm")args.push("-vf","scale=trunc(iw/2)*2:trunc(ih/2)*2"); // yuv420p needs even dimensions
       if(fps)args.push("-r",fps);
-      if(toExt==="mp4"){
+      if(toExt==="mp4"||toExt==="mov"){
         args.push("-c:v","libx264","-preset","veryfast","-pix_fmt","yuv420p");
         if(kbps)args.push("-b:v",kbps+"k");else args.push("-crf",String(crf));
         args.push("-c:a","aac","-b:a","128k","-movflags","+faststart");
+        if(toExt==="mov")args.push("-f","mov");
       }else{
         const vb=kbps||{balanced:"2000",small:"1000",quality:"4000"}[target]||"2000";
         args.push("-c:v","libvpx","-b:v",vb+"k","-deadline","realtime","-cpu-used","8","-c:a","libopus","-b:a","96k");
@@ -627,6 +628,8 @@
       else if(toExt==="m4a")args.push("-c:a","aac","-b:a",Math.min(kb,256)+"k");
       else if(toExt==="flac")args.push("-c:a","flac");
       else if(toExt==="ogg")args.push("-c:a","libvorbis","-q:a",String(Math.max(0,Math.min(10,Math.round((parseInt(opts.quality||85,10)-40)/6)))));
+      else if(toExt==="opus")args.push("-c:a","libopus","-b:a",Math.min(kb,256)+"k","-vbr","on");
+      else if(toExt==="aac")args.push("-c:a","aac","-b:a",Math.min(kb,256)+"k","-f","adts");
       if(opts.samplerate&&opts.samplerate!=="keep")args.push("-ar",String(opts.samplerate));
       if(opts.channels&&opts.channels!=="keep")args.push("-ac",String(opts.channels));
     }
