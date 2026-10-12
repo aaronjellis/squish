@@ -118,9 +118,18 @@ async function run(){
   ok("page count reads /Count", (await C.detectPdfPages(scanPdf))===3, "got "+(await C.detectPdfPages(scanPdf)));
 
 
+  group("SVG → DXF: shapes, arcs, transforms");
+  let t, s;
+  const shapesSvg = await fx("shapes.svg","image/svg+xml");
+  t = await tryEngine("svgDxf",shapesSvg,{curveMode:"splines"},"dxf"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("rounded rect, circle, and arc emit splines (≥ 9)", (s.match(/\nSPLINE\n/g)||[]).length>=9, (s.match(/\nSPLINE\n/g)||[]).length+" splines"+(t.err?" "+t.err.message:""));
+  ok("circle inside the translated group lands at x≈160", /\n10\n160\n/.test(s), "");
+  ok("polygon gives 3 LINE entities", (s.match(/\nLINE\n/g)||[]).length>=3, (s.match(/\nLINE\n/g)||[]).length+" lines");
+  t = await tryEngine("svgDxf",new File(["<svg><rect"],"bad.svg",{type:"image/svg+xml"}),{},"dxf");
+  ok("invalid SVG fails with a plain message", t.err && /couldn't read this SVG/.test(t.err.message), String(t.err?.message));
   group("PDF → images (pdf.js)");
   const pdfFx = await fx("two-page.pdf","application/pdf");
-  let t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:""},"png");
+  t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:""},"png");
   ok("two pages return a zip with a .zip name", t.r && t.r.blob && t.r.name==="two-page.zip", t.err?String(t.err.message):t.r?.name);
   if(t.r && t.r.blob){const z=new Uint8Array(await t.r.blob.arrayBuffer());
     ok("zip has two central directory entries", countSig(z,[0x50,0x4b,0x01,0x02])===2, countSig(z,[0x50,0x4b,0x01,0x02])+" entries");}
@@ -138,7 +147,7 @@ async function run(){
   group("Documents (md, html, rtf, txt in; html, md, txt out)");
   const mdFx = await fx("short.md","text/markdown"), htmlFx = await fx("sample.html","text/html"),
         rtfFx = await fx("sample.rtf","application/rtf"), txtFx = await fx("sample.txt","text/plain");
-  t = await tryEngine("docs",mdFx,{},"html"); let s = t.r instanceof Blob ? await t.r.text() : "";
+  t = await tryEngine("docs",mdFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("md → html has heading, bold, link, lists", /<h1>Squish fixture<\/h1>/.test(s)&&/<strong>bold<\/strong>/.test(s)&&/<a href="https:\/\/example.com">link<\/a>/.test(s)&&/<ol>/.test(s)&&/<ul>/.test(s), t.err?String(t.err.message):"");
   ok("md → html keeps the code block and hr", /<pre><code>let x = 1;<\/code><\/pre>/.test(s)&&/<hr>/.test(s));
   t = await tryEngine("docs",mdFx,{},"md"); s = t.r instanceof Blob ? await t.r.text() : "";

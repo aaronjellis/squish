@@ -33,6 +33,21 @@
   }
   const baseOf=file=>(file.name||"squished").replace(/\.[^.]+$/,"")||"squished";
 
+  /* ---------- SVG -> DXF (DOM walk; geometry lives in core) ---------- */
+  const SHAPE_TAGS=new Set(["path","line","rect","circle","ellipse","polygon","polyline"]);
+  function svgToDxf(svgText,mode,tol){
+    const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
+    if(doc.querySelector("parsererror"))throw new Error("Squish couldn't read this SVG. The file isn't valid XML.");
+    const shapes=[];
+    const walk=(el,ctm)=>{for(const n of el.children){const tag=n.tagName.toLowerCase();
+      const m=C.mulMatrix(ctm,C.parseTransform(n.getAttribute("transform")));
+      if(SHAPE_TAGS.has(tag)){const attrs={};for(const at of n.attributes)attrs[at.name]=at.value;shapes.push({tag,attrs,ctm:m});}
+      else if(tag==="g"||tag==="svg"||tag==="a"||tag==="switch")walk(n,m);}};
+    walk(doc.documentElement,C.parseTransform(doc.documentElement.getAttribute("transform")));
+    return C.shapesToDxf(shapes,mode,tol);
+  }
+  C.svgToDxf=svgToDxf;
+
   /* ---------- pdf.js ---------- */
   async function openPdf(file,onP){
     const pdfjs=await loadLib("pdfjs",onP);

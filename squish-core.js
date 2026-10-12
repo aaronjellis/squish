@@ -216,7 +216,7 @@
       return await canvasBlob(c,mimeFor(toExt),(parseInt(opts.quality||90))/100);
     },
     async svgDxf(file,opts,onP){const txt=await file.text();onP(.3);
-      const dxf=svgToDxf(txt,opts.curveMode||"splines",parseFloat(opts.tolerance||"0.5"));onP(.9);
+      const dxf=api.svgToDxf(txt,opts.curveMode||"splines",parseFloat(opts.tolerance||"0.5"));onP(.9);
       return new Blob([dxf],{type:"application/dxf"});},
     pdfRaster:notLoaded,
     docs:notLoaded,
@@ -224,20 +224,92 @@
     ffmpeg:notLoaded,
   };
 
-  /* ---------- SVG → DXF with real SPLINE entities ---------- */
-  function svgToDxf(svgText,mode,tol){
-    const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");const lines=[],polys=[],splines=[];
-    doc.querySelectorAll("line").forEach(l=>lines.push([+l.getAttribute("x1"),+l.getAttribute("y1"),+l.getAttribute("x2"),+l.getAttribute("y2")]));
-    doc.querySelectorAll("path").forEach(pth=>{const segs=parsePath(pth.getAttribute("d")||"");let cur=[0,0],start=[0,0];
-      segs.forEach(s=>{
-        if(s.cmd==="M"){cur=[s.x,s.y];start=[...cur];}
-        else if(s.cmd==="L"){lines.push([cur[0],cur[1],s.x,s.y]);cur=[s.x,s.y];}
-        else if(s.cmd==="C"){mode==="splines"?splines.push({deg:3,pts:[cur,[s.x1,s.y1],[s.x2,s.y2],[s.x,s.y]]}):polys.push(flattenCubic(cur,[s.x1,s.y1],[s.x2,s.y2],[s.x,s.y],tol));cur=[s.x,s.y];}
-        else if(s.cmd==="Q"){mode==="splines"?splines.push({deg:2,pts:[cur,[s.x1,s.y1],[s.x,s.y]]}):polys.push(flattenQuad(cur,[s.x1,s.y1],[s.x,s.y],tol));cur=[s.x,s.y];}
-        else if(s.cmd==="Z"){lines.push([cur[0],cur[1],start[0],start[1]]);cur=[...start];}
+  /* ---------- SVG geometry: transforms, shapes, arcs ---------- */
+  const IDENTITY=[1,0,0,1,0,0];
+  function mulMatrix(m,n){return [m[0]*n[0]+m[2]*n[1],m[1]*n[0]+m[3]*n[1],m[0]*n[2]+m[2]*n[3],m[1]*n[2]+m[3]*n[3],m[0]*n[4]+m[2]*n[5]+m[4],m[1]*n[4]+m[3]*n[5]+m[5]];}
+  function applyMatrix(m,p){return [m[0]*p[0]+m[2]*p[1]+m[4],m[1]*p[0]+m[3]*p[1]+m[5]];}
+  function parseTransform(str){
+    let m=IDENTITY.slice();const re=/([a-zA-Z]+)\s*\(([^)]*)\)/g;let t;
+    while((t=re.exec(String(str||"")))){
+      const a=t[2].split(/[\s,]+/).filter(Boolean).map(Number),r=Math.PI/180;let n=null;
+      switch(t[1]){
+        case "matrix":if(a.length===6)n=a;break;
+        case "translate":n=[1,0,0,1,a[0]||0,a[1]||0];break;
+        case "scale":n=[a[0]||1,0,0,a.length>1?a[1]:(a[0]||1),0,0];break;
+        case "rotate":{const c=Math.cos((a[0]||0)*r),si=Math.sin((a[0]||0)*r);n=[c,si,-si,c,0,0];
+          if(a.length>2)n=mulMatrix(mulMatrix([1,0,0,1,a[1],a[2]],n),[1,0,0,1,-a[1],-a[2]]);break;}
+        case "skewX":n=[1,0,Math.tan((a[0]||0)*r),1,0,0];break;
+        case "skewY":n=[1,Math.tan((a[0]||0)*r),0,1,0,0];break;
+      }
+      if(n)m=mulMatrix(m,n);
+    }
+    return m;
+  }
+  // SVG arc (endpoint form) to cubic Béziers, per the SVG implementation notes (F.6.5).
+  function arcToCubics(x1,y1,rx,ry,phiDeg,fA,fS,x2,y2){
+    rx=Math.abs(rx);ry=Math.abs(ry);if(!rx||!ry||(x1===x2&&y1===y2))return [{x1,y1,x2,y2,x:x2,y:y2}];
+    const phi=phiDeg*Math.PI/180,cp=Math.cos(phi),sp=Math.sin(phi);
+    const dx=(x1-x2)/2,dy=(y1-y2)/2,x1p=cp*dx+sp*dy,y1p=-sp*dx+cp*dy;
+    const lam=(x1p*x1p)/(rx*rx)+(y1p*y1p)/(ry*ry);if(lam>1){rx*=Math.sqrt(lam);ry*=Math.sqrt(lam);}
+    const num=rx*rx*ry*ry-rx*rx*y1p*y1p-ry*ry*x1p*x1p,den=rx*rx*y1p*y1p+ry*ry*x1p*x1p;
+    let k=den?Math.sqrt(Math.max(0,num/den)):0;if(fA===fS)k=-k;
+    const cxp=k*rx*y1p/ry,cyp=-k*ry*x1p/rx;
+    const cx=cp*cxp-sp*cyp+(x1+x2)/2,cy=sp*cxp+cp*cyp+(y1+y2)/2;
+    const ang=(ux,uy,vx,vy)=>Math.atan2(ux*vy-uy*vx,ux*vx+uy*vy);
+    const t1=Math.atan2((y1p-cyp)/ry,(x1p-cxp)/rx);let dt=ang((x1p-cxp)/rx,(y1p-cyp)/ry,(-x1p-cxp)/rx,(-y1p-cyp)/ry);
+    if(!fS&&dt>0)dt-=2*Math.PI;if(fS&&dt<0)dt+=2*Math.PI;
+    const n=Math.max(1,Math.ceil(Math.abs(dt)/(Math.PI/2)-1e-9)),out=[],seg=dt/n;
+    const pt=a=>[cx+rx*Math.cos(a)*cp-ry*Math.sin(a)*sp,cy+rx*Math.cos(a)*sp+ry*Math.sin(a)*cp];
+    const dp=a=>[-rx*Math.sin(a)*cp-ry*Math.cos(a)*sp,-rx*Math.sin(a)*sp+ry*Math.cos(a)*cp];
+    for(let i=0;i<n;i++){const a0=t1+i*seg,a1=a0+seg,al=4/3*Math.tan(seg/4);
+      const p0=pt(a0),p3=pt(a1),d0=dp(a0),d1=dp(a1);
+      out.push({x1:p0[0]+al*d0[0],y1:p0[1]+al*d0[1],x2:p3[0]-al*d1[0],y2:p3[1]-al*d1[1],x:p3[0],y:p3[1]});}
+    out[out.length-1].x=x2;out[out.length-1].y=y2;return out;
+  }
+  const KAPPA=0.5522847498;
+  function ellipseSegs(cx,cy,rx,ry){const K=KAPPA;
+    return [{cmd:"M",x:cx+rx,y:cy},
+      {cmd:"C",x1:cx+rx,y1:cy+K*ry,x2:cx+K*rx,y2:cy+ry,x:cx,y:cy+ry},
+      {cmd:"C",x1:cx-K*rx,y1:cy+ry,x2:cx-rx,y2:cy+K*ry,x:cx-rx,y:cy},
+      {cmd:"C",x1:cx-rx,y1:cy-K*ry,x2:cx-K*rx,y2:cy-ry,x:cx,y:cy-ry},
+      {cmd:"C",x1:cx+K*rx,y1:cy-ry,x2:cx+rx,y2:cy-K*ry,x:cx+rx,y:cy},{cmd:"Z"}];
+  }
+  function shapeSegs(shape){
+    const a=shape.attrs||{},num=k=>parseFloat(a[k]||"0")||0,K=KAPPA;
+    switch(shape.tag){
+      case "path":return parsePath(a.d||"");
+      case "line":return [{cmd:"M",x:num("x1"),y:num("y1")},{cmd:"L",x:num("x2"),y:num("y2")}];
+      case "rect":{const x=num("x"),y=num("y"),w=num("width"),h=num("height");let rx=parseFloat(a.rx),ry=parseFloat(a.ry);
+        if(isNaN(rx)&&isNaN(ry))rx=ry=0;if(isNaN(rx))rx=ry;if(isNaN(ry))ry=rx;rx=Math.min(rx,w/2);ry=Math.min(ry,h/2);
+        if(!rx||!ry)return [{cmd:"M",x,y},{cmd:"L",x:x+w,y},{cmd:"L",x:x+w,y:y+h},{cmd:"L",x,y:y+h},{cmd:"Z"}];
+        return [{cmd:"M",x:x+rx,y},{cmd:"L",x:x+w-rx,y},{cmd:"C",x1:x+w-rx+K*rx,y1:y,x2:x+w,y2:y+ry-K*ry,x:x+w,y:y+ry},
+          {cmd:"L",x:x+w,y:y+h-ry},{cmd:"C",x1:x+w,y1:y+h-ry+K*ry,x2:x+w-rx+K*rx,y2:y+h,x:x+w-rx,y:y+h},
+          {cmd:"L",x:x+rx,y:y+h},{cmd:"C",x1:x+rx-K*rx,y1:y+h,x2:x,y2:y+h-ry+K*ry,x,y:y+h-ry},
+          {cmd:"L",x,y:y+ry},{cmd:"C",x1:x,y1:y+ry-K*ry,x2:x+rx-K*rx,y2:y,x:x+rx,y},{cmd:"Z"}];}
+      case "circle":return ellipseSegs(num("cx"),num("cy"),num("r"),num("r"));
+      case "ellipse":return ellipseSegs(num("cx"),num("cy"),num("rx"),num("ry"));
+      case "polygon":case "polyline":{const pts=String(a.points||"").trim().split(/[\s,]+/).map(Number).filter(n=>!isNaN(n));const segs=[];
+        for(let i=0;i+1<pts.length;i+=2)segs.push({cmd:i?"L":"M",x:pts[i],y:pts[i+1]});
+        if(shape.tag==="polygon"&&segs.length)segs.push({cmd:"Z"});return segs;}
+      default:return [];
+    }
+  }
+  function shapesToDxf(shapes,mode,tol){
+    const lines=[],polys=[],splines=[];
+    shapes.forEach(sh=>{const m=sh.ctm||IDENTITY;const T=p=>applyMatrix(m,p);let cur=[0,0],start=[0,0];
+      shapeSegs(sh).forEach(s=>{
+        if(s.cmd==="M"){cur=T([s.x,s.y]);start=cur.slice();}
+        else if(s.cmd==="L"){const p=T([s.x,s.y]);lines.push([cur[0],cur[1],p[0],p[1]]);cur=p;}
+        else if(s.cmd==="C"){const c1=T([s.x1,s.y1]),c2=T([s.x2,s.y2]),p=T([s.x,s.y]);
+          mode==="splines"?splines.push({deg:3,pts:[cur,c1,c2,p]}):polys.push(flattenCubic(cur,c1,c2,p,tol));cur=p;}
+        else if(s.cmd==="Q"){const c1=T([s.x1,s.y1]),p=T([s.x,s.y]);
+          mode==="splines"?splines.push({deg:2,pts:[cur,c1,p]}):polys.push(flattenQuad(cur,c1,p,tol));cur=p;}
+        else if(s.cmd==="Z"){if(cur[0]!==start[0]||cur[1]!==start[1])lines.push([cur[0],cur[1],start[0],start[1]]);cur=start.slice();}
       });});
     return buildDxf(lines,polys,splines);
   }
+  // The DOM walk lives in squish-engines.js (it replaces this on SquishCore).
+  function svgToDxf(){throw new Error("svgToDxf needs a DOM; squish-engines.js provides it.");}
   // Robust SVG path tokenizer. Handles M L H V C S Q T A Z (+ relative forms),
   // implicit repeated coordinates, and smooth-curve reflection. Converts
   // everything down to M / L / C / Q / Z so the DXF emitter stays simple.
@@ -261,7 +333,8 @@
       if(C==="S"){if(!has(4))break;let[x2,y2,x,y]=rd(4);if(rel){x2+=cx;y2+=cy;x+=cx;y+=cy;}let x1=cx,y1=cy;if(pcx!=null){x1=2*cx-pcx;y1=2*cy-pcy;}out.push({cmd:"C",x1,y1,x2,y2,x,y});pcx=x2;pcy=y2;pqx=pqy=null;cx=x;cy=y;continue;}
       if(C==="Q"){if(!has(4))break;let[x1,y1,x,y]=rd(4);if(rel){x1+=cx;y1+=cy;x+=cx;y+=cy;}out.push({cmd:"Q",x1,y1,x,y});pqx=x1;pqy=y1;pcx=pcy=null;cx=x;cy=y;continue;}
       if(C==="T"){if(!has(2))break;let[x,y]=rd(2);if(rel){x+=cx;y+=cy;}let x1=cx,y1=cy;if(pqx!=null){x1=2*cx-pqx;y1=2*cy-pqy;}out.push({cmd:"Q",x1,y1,x,y});pqx=x1;pqy=y1;pcx=pcy=null;cx=x;cy=y;continue;}
-      if(C==="A"){if(!has(7))break;let[rx,ry,rot,laf,sf,x,y]=rd(7);if(rel){x+=cx;y+=cy;}out.push({cmd:"L",x,y});cx=x;cy=y;pcx=pcy=pqx=pqy=null;continue;} // arc → line to endpoint (approximation)
+      if(C==="A"){if(!has(7))break;let[rx,ry,rot,laf,sf,x,y]=rd(7);if(rel){x+=cx;y+=cy;}
+        arcToCubics(cx,cy,rx,ry,rot,laf?1:0,sf?1:0,x,y).forEach(c=>out.push({cmd:"C",x1:c.x1,y1:c.y1,x2:c.x2,y2:c.y2,x:c.x,y:c.y}));cx=x;cy=y;pcx=pcy=pqx=pqy=null;continue;}
       i++; // unknown token, skip one to stay safe
     }
     return out;
@@ -523,7 +596,7 @@
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
     norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
-    svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,
+    svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};
   root.SquishCore=api;
   if (typeof module!=="undefined" && module.exports) module.exports=api;

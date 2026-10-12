@@ -73,7 +73,7 @@ let tm = C.parsePath("M0 0 Q5 10 10 0 T20 0");
 ok("T becomes a quad (Q)", tm[2].cmd==="Q");
 // Arc does not throw and yields a segment to its endpoint
 let arc = C.parsePath("M0 0 A5 5 0 0 1 10 10");
-ok("A → line to endpoint (no throw)", arc[1].cmd==="L" && arc[1].x===10 && arc[1].y===10);
+ok("A → cubic curve ending at the endpoint (no throw)", arc[1].cmd==="C" && Math.abs(arc[arc.length-1].x-10)<1e-9 && Math.abs(arc[arc.length-1].y-10)<1e-9);
 // a malformed / truncated path must not throw and must return something usable
 let trunc;
 try{ trunc = C.parsePath("M0 0 C10 10 20"); ok("truncated path doesn't throw", true); }
@@ -364,6 +364,30 @@ const sizes=files.filter(f=>OLD_SIZE.test(fs.readFileSync(path.join(__dirname,f)
 ok("the ffmpeg core size is stated one way (31 MB)"+(sizes.length?" ("+sizes+")":""), sizes.length===0);
 const pkg=require("./package.json");
 ok("dev dependencies are pinned exactly", Object.values(pkg.devDependencies||{}).every(v=>/^\d+\.\d+\.\d+$/.test(v)));
+
+/* ---------- 16. SVG shapes, arcs, transforms ---------- */
+section("SVG shapes, arcs, transforms");
+const I=[1,0,0,1,0,0];
+eq("blank transform is identity", JSON.stringify(C.parseTransform("")), JSON.stringify(I));
+eq("translate", JSON.stringify(C.applyMatrix(C.parseTransform("translate(10,5)"),[1,1])), "[11,6]");
+eq("scale with one value", JSON.stringify(C.applyMatrix(C.parseTransform("scale(2)"),[3,4])), "[6,8]");
+ok("rotate 90 about origin", (p=>Math.abs(p[0])<1e-9&&Math.abs(p[1]-10)<1e-9)(C.applyMatrix(C.parseTransform("rotate(90)"),[10,0])));
+ok("rotate about a center", (p=>Math.abs(p[0]-5)<1e-9&&Math.abs(p[1]-5)<1e-9)(C.applyMatrix(C.parseTransform("rotate(90 5 5)"),[5,5])));
+eq("matrix() and chained transforms compose left to right", JSON.stringify(C.applyMatrix(C.parseTransform("translate(10) scale(2)"),[1,0])), "[12,0]");
+const rectSegs=C.shapeSegs({tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5"}});
+eq("rect is a closed 4-line path", rectSegs.map(s=>s.cmd).join(""), "MLLLZ");
+ok("rounded rect uses curves", C.shapeSegs({tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5",rx:"1"}}).some(s=>s.cmd==="C"));
+eq("circle is 4 cubics", C.shapeSegs({tag:"circle",attrs:{cx:"0",cy:"0",r:"5"}}).filter(s=>s.cmd==="C").length, 4);
+eq("polygon closes, polyline does not", C.shapeSegs({tag:"polygon",attrs:{points:"0,0 10,0 10,10"}}).map(s=>s.cmd).join("")+"|"+C.shapeSegs({tag:"polyline",attrs:{points:"0,0 10,0 10,10"}}).map(s=>s.cmd).join(""), "MLLZ|MLL");
+const arcQ=C.arcToCubics(10,0,10,10,0,0,1,0,10);
+ok("quarter arc becomes one cubic", arcQ.length===1);
+ok("arc cubic midpoint lies on the circle", (()=>{const s=arcQ[0];const t=0.5,mt=0.5;const x=mt**3*10+3*mt*mt*t*s.x1+3*mt*t*t*s.x2+t**3*s.x;const y=mt**3*0+3*mt*mt*t*s.y1+3*mt*t*t*s.y2+t**3*s.y;return Math.abs(Math.hypot(x,y)-10)<0.03;})());
+eq("half arc becomes two cubics", C.arcToCubics(10,0,10,10,0,1,1,-10,0).length, 2);
+ok("path A command now produces a curve", C.parsePath("M10 0 A10 10 0 0 1 0 10").some(s=>s.cmd==="C"));
+const dxfT=C.shapesToDxf([{tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5"},ctm:C.parseTransform("translate(100,50)")}],"splines",0.5);
+ok("group transform moves a rect", /\n10\n100\n20\n-50\n/.test(dxfT) && /\n10\n110\n/.test(dxfT));
+ok("a circle under scale(2) emits splines with control points at radius 10", (()=>{const d=C.shapesToDxf([{tag:"circle",attrs:{cx:"0",cy:"0",r:"5"},ctm:C.parseTransform("scale(2)")}],"splines",0.5);return /\nSPLINE\n/.test(d)&&/\n10\n10\n20\n(-0|0)\n/.test(d);})());
+eq("shapesToDxf still emits a line for <line>", (C.shapesToDxf([{tag:"line",attrs:{x1:"0",y1:"0",x2:"1",y2:"1"},ctm:I}],"splines",0.5).match(/\nLINE\n/g)||[]).length, 1);
 
 /* ---------- summary ---------- */
 function finish(){
