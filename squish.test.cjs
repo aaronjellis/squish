@@ -389,6 +389,16 @@ ok("group transform moves a rect", /\n10\n100\n20\n-50\n/.test(dxfT) && /\n10\n1
 ok("a circle under scale(2) emits splines with control points at radius 10", (()=>{const d=C.shapesToDxf([{tag:"circle",attrs:{cx:"0",cy:"0",r:"5"},ctm:C.parseTransform("scale(2)")}],"splines",0.5);return /\nSPLINE\n/.test(d)&&/\n10\n10\n20\n(-0|0)\n/.test(d);})());
 eq("shapesToDxf still emits a line for <line>", (C.shapesToDxf([{tag:"line",attrs:{x1:"0",y1:"0",x2:"1",y2:"1"},ctm:I}],"splines",0.5).match(/\nLINE\n/g)||[]).length, 1);
 
+/* ---------- 17. Text decoding ---------- */
+section("Text decoding");
+const u8=a=>new Uint8Array(a);
+eq("utf-8 decodes", C.decodeText(u8([0x63,0x61,0x66,0xc3,0xa9])), "caf"+String.fromCharCode(0xe9));
+eq("utf-8 BOM is stripped", C.decodeText(u8([0xef,0xbb,0xbf,0x68,0x69])), "hi");
+eq("invalid utf-8 falls back to windows-1252", C.decodeText(u8([0x63,0x61,0x66,0xe9,0x20,0x93,0x71,0x94])), "caf"+String.fromCharCode(0xe9)+" "+String.fromCharCode(0x201c)+"q"+String.fromCharCode(0x201d));
+eq("utf-16le BOM decodes", C.decodeText(u8([0xff,0xfe,0x68,0x00,0x69,0x00])), "hi");
+eq("utf-16be BOM decodes", C.decodeText(u8([0xfe,0xff,0x00,0x68,0x00,0x69])), "hi");
+eq("empty input is empty", C.decodeText(u8([])), "");
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");

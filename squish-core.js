@@ -351,6 +351,21 @@
       knots.forEach(kn=>L.push("40",kn));ctrl.forEach(([x,y])=>L.push("10",x,"20",Y(y),"30","0"));});
     L.push("0","ENDSEC","0","EOF");return L.join("\n");}
 
+  /* ---------- Text decoding: BOMs, strict UTF-8, Windows-1252 fallback ---------- */
+  // Bytes 0x80..0x9F are Windows-1252 punctuation, not C1 controls. Mapped by hand because
+  // Node's small-ICU TextDecoder leaves them as controls while browsers map them.
+  const CP1252={0x80:0x20AC,0x82:0x201A,0x83:0x0192,0x84:0x201E,0x85:0x2026,0x86:0x2020,0x87:0x2021,0x88:0x02C6,0x89:0x2030,0x8A:0x0160,0x8B:0x2039,0x8C:0x0152,0x8E:0x017D,
+    0x91:0x2018,0x92:0x2019,0x93:0x201C,0x94:0x201D,0x95:0x2022,0x96:0x2013,0x97:0x2014,0x98:0x02DC,0x99:0x2122,0x9A:0x0161,0x9B:0x203A,0x9C:0x0153,0x9E:0x017E,0x9F:0x0178};
+  function decode1252(bytes){let out="";for(let i=0;i<bytes.length;i++){const b=bytes[i];out+=String.fromCharCode(CP1252[b]||b);}return out;}
+  function decodeText(bytes){
+    if(!bytes||!bytes.length)return "";
+    if(bytes[0]===0xEF&&bytes[1]===0xBB&&bytes[2]===0xBF)return new TextDecoder("utf-8").decode(bytes.subarray(3));
+    if(bytes[0]===0xFF&&bytes[1]===0xFE)return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+    if(bytes[0]===0xFE&&bytes[1]===0xFF)return new TextDecoder("utf-16be").decode(bytes.subarray(2));
+    try{return new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
+    catch(e){return decode1252(bytes);}
+  }
+
   /* ---------- Document block model ----------
      Block: {type: h1|h2|h3|p|li|ol|code|quote|hr, runs: [{text, b, i, code, href}]}
      li = bullet item, ol = numbered item. Consecutive items form one list. */
@@ -440,9 +455,6 @@
     const src=String(rtf),blocks=[];
     const SKIP=new Set(["fonttbl","colortbl","stylesheet","info","pict","object","header","footer","footnote",
       "listtable","listoverridetable","themedata","colorschememapping","latentstyles","datastore","xmlnstbl","generator"]);
-    // Bytes 0x80..0x9F in \'xx escapes are Windows-1252, not C1 controls.
-    const CP1252={0x80:0x20AC,0x82:0x201A,0x83:0x0192,0x84:0x201E,0x85:0x2026,0x86:0x2020,0x87:0x2021,0x88:0x02C6,0x89:0x2030,0x8A:0x0160,0x8B:0x2039,0x8C:0x0152,0x8E:0x017D,
-      0x91:0x2018,0x92:0x2019,0x93:0x201C,0x94:0x201D,0x95:0x2022,0x96:0x2013,0x97:0x2014,0x98:0x02DC,0x99:0x2122,0x9A:0x0161,0x9B:0x203A,0x9C:0x0153,0x9E:0x017E,0x9F:0x0178};
     let runs=[],cur="",state={b:false,i:false,uc:1},stack=[],depth=0,skipDepth=0,i=0;
     const flushRun=()=>{if(cur){runs.push({text:cur,b:state.b,i:state.i});cur="";}};
     const flushPara=()=>{flushRun();if(runs.some(r=>r.text.trim()))blocks.push({type:"p",runs});runs=[];};
@@ -594,7 +606,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,decodeText,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};

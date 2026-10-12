@@ -162,6 +162,8 @@ async function run(){
   ok("rtf → html keeps bold", /<strong>bold<\/strong>/.test(s), t.err?String(t.err.message):"");
   t = await tryEngine("docs",txtFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("txt → html makes two paragraphs", (s.match(/<p>/g)||[]).length===2, t.err?String(t.err.message):"");
+  t = await tryEngine("docs",await fx("latin1.txt","text/plain"),{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("Latin-1 text decodes (accents and curly quotes)", s.includes("caf"+String.fromCharCode(0xe9))&&s.includes(String.fromCharCode(0x201c)+"quoted"+String.fromCharCode(0x201d)), t.err?String(t.err.message):s.slice(-80));
   t = await tryEngine("docs",new File([""],"empty.txt",{type:"text/plain"}),{},"html");
   ok("empty input fails clearly", t.err && /couldn't find any text/i.test(t.err.message), String(t.err?.message));
   t = await tryEngine("docs",mdFx,{},"docx");

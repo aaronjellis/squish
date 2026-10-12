@@ -10,7 +10,7 @@
   const C=globalThis.SquishCore;
   if(!C)throw new Error("squish-core.js must load before squish-engines.js");
   const {norm,extOf,canvasBlob,mimeFor,parsePageRange,zipStore,runsText,blocksFromText,rtfToBlocks,
-    blocksToHtml,blocksToMd,blocksToTxt,pdfTextToBlocks,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME}=C;
+    blocksToHtml,blocksToMd,blocksToTxt,pdfTextToBlocks,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME,decodeText}=C;
 
   /* ---------- lazy library loading ---------- */
   const LIBS={
@@ -131,8 +131,9 @@
   }
 
   /* ---------- documents ---------- */
+  const readText=async file=>decodeText(new Uint8Array(await file.arrayBuffer()));
   async function parseDoc(file,onP){
-    const from=norm(extOf(file.name)),text=await file.text();
+    const from=norm(extOf(file.name)),text=await readText(file);
     if(from==="md"){const {marked}=await loadLib("marked",onP);return blocksFromHtml(marked.parse(text,{gfm:true,async:false}));}
     if(from==="html")return blocksFromHtml(text);
     if(from==="rtf")return rtfToBlocks(text);
