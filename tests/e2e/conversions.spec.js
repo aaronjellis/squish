@@ -98,6 +98,7 @@ test("app: md to epub",async({page})=>{
 
 test("app: voting opens a styled requested-formats panel, not an alert",async({page})=>{
   let alerts=0;page.on("dialog",d=>{alerts++;d.dismiss();});
+  await page.addInitScript(()=>{window.posthog={captured:[],capture(name,props){this.captured.push({name,props});}};});
   await page.goto("/squish.html");
   await page.setInputFiles("#fileInput",fx("shapes.svg"));
   const input=page.locator("#targetInput");await input.fill(".dwg");await input.press("Enter");
@@ -111,4 +112,14 @@ test("app: voting opens a styled requested-formats panel, not an alert",async({p
   await page.keyboard.press("Escape");
   await expect(dlg).toBeHidden();
   expect(alerts).toBe(0);
+  const captured=await page.evaluate(()=>window.posthog.captured);
+  expect(captured).toContainEqual({name:"format_vote_cast",props:{project:"squish",from:"svg",to:"dwg"}});
+});
+
+test("app: a finished conversion reports a PostHog event with the formats",async({page})=>{
+  await page.addInitScript(()=>{window.posthog={captured:[],capture(name,props){this.captured.push({name,props});}};});
+  const r=await convert(page,"people.csv","json");
+  expect(r.title).toBe("ta-da!");
+  const captured=await page.evaluate(()=>window.posthog.captured);
+  expect(captured).toContainEqual({name:"file_converted",props:{project:"squish",from:"csv",to:"json"}});
 });

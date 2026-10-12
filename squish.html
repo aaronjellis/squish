@@ -233,7 +233,7 @@
       <path d="M3 13 H24" stroke="url(#ag)" stroke-width="5" fill="none" stroke-linecap="round"/>
       <path d="M19 6 L28 13 L19 20" stroke="url(#ag)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
     </svg></div>
-    <button class="hdrChip to" id="hdrTo" title="Pick a different format"><span class="ext" id="hdrToExt">…</span></button>
+    <button class="hdrChip to" id="hdrTo" title="Pick a different format" aria-label="Pick a different format"><span class="ext" id="hdrToExt">…</span></button>
   </header>
 
   <main>
@@ -606,7 +606,8 @@ async function runConvert(){const conv=state.conv;if(!conv)return;
     if(engineDone&&el>=minDur&&p>0.995){p=1;render(1,0,"");res();}else requestAnimationFrame(tick);}tick();});
   if(state.cancelled){stopHelix();hide("#converting");
     const note=document.createElement("div");note.className="caveat clay";note.id="cancelNote";note.innerHTML='<div class="hint">Cancelled. Nothing was changed.</div>';
-    $("#optGrid").appendChild(note);logEvent("convert_"+state.fromExt+"_"+state.toExt+"_cancel");return;}
+    $("#optGrid").appendChild(note);logEvent("convert_"+state.fromExt+"_"+state.toExt+"_cancel");
+    window.posthog?.capture("conversion_cancelled",{project:"squish",from:state.fromExt,to:state.toExt});return;}
   await wait(500);stopHelix();hide("#converting");showResult(result,error,conv);
   logEvent("convert_"+state.fromExt+"_"+state.toExt+(error?"_fail":""));}
 function friendlyError(e){const m=(e&&e.message)||String(e||"");
@@ -619,6 +620,7 @@ function showResult(result,error,conv){
   const base=state.file.name.replace(/\.[^.]+$/,"");
   state.outBlob=blob;state.outName=(result&&result.name)||base+"."+state.toExt;
   const failed=!blob;const outExt=state.outName.split(".").pop().toUpperCase();
+  window.posthog?.capture(failed?"conversion_failed":"file_converted",{project:"squish",from:state.fromExt,to:failed?state.toExt:outExt.toLowerCase()});
   hideOptions();$("#convertBtn").classList.add("hidden");
   $("#resultTitle").textContent=failed?"hmm, that didn't work":"ta-da!";
   $("#resultSub").textContent=failed?friendlyError(error):`${state.fromExt.toUpperCase()} → ${outExt} · ${fmtBytes(blob.size)}`;
@@ -651,6 +653,7 @@ function addVote(pair,from,to){
   // Local tally always. When the host sets data-vote-endpoint on <html>, the pair is posted too.
   // Only the two format names leave the device, never the file.
   try{const k="squish_requests",r=JSON.parse(localStorage.getItem(k)||"{}");r[pair]=(r[pair]||0)+1;localStorage.setItem(k,JSON.stringify(r));}catch(e){}
+  window.posthog?.capture("format_vote_cast",{project:"squish",from,to});
   if(VOTE_ENDPOINT){fetch(VOTE_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({from,to,page:location.pathname})}).catch(()=>{});}
 }
 async function fetchVoteTotals(){
