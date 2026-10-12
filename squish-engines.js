@@ -24,6 +24,7 @@
     heif:{url:"vendor/libheif/libheif-bundle.mjs",label:"the HEIC decoder (2 MB, first time only)"},
     utif:{url:"vendor/utif/UTIF.js",kind:"script",global:"UTIF",label:"the TIFF decoder"},
     agpsd:{url:"vendor/ag-psd/bundle.js",kind:"script",global:"agPsd",label:"the Photoshop reader"},
+    pptx:{url:"vendor/pptxgenjs/pptxgen.bundle.js",kind:"script",global:"PptxGenJS",label:"the PowerPoint writer"},
   };
   const loaded={};
   // UMD builds: inject a script tag and hand back the global it defines.
@@ -114,28 +115,44 @@
       throw new Error("Squish couldn't read this PDF. "+(e&&e.message||e));
     }
   }
-  async function pdfRaster(file,opts,onP,toExt){
+  // Renders the requested pages to image blobs. Shared by pdfRaster and pdfPptx.
+  async function renderPdfPages(file,opts,onP,toExt,progressSpan){
     const doc=await C.openPdf(file,onP);
-    const outs=[];let pages,total;
+    const out=[];let pages,total;const [p0,p1]=progressSpan||[0.1,0.9];
     try{
       total=doc.numPages;pages=parsePageRange(opts.pages,total);
       if(!pages.length)throw new Error('No pages matched "'+opts.pages+'". This PDF has '+total+(total===1?" page.":" pages."));
       const scale=parseInt(opts.dpi||"150",10)/72,mime=mimeFor(toExt),q=toExt==="jpg"?0.9:undefined;
       for(let k=0;k<pages.length;k++){
-        onP(0.1+0.8*(k/pages.length),"rendering page "+pages[k]+" of "+total);
-        const page=await doc.getPage(pages[k]);const vp=page.getViewport({scale});
+        onP(p0+(p1-p0)*(k/pages.length),"rendering page "+pages[k]+" of "+total);
+        const page=await doc.getPage(pages[k]);const vp=page.getViewport({scale}),vp1=page.getViewport({scale:1});
         const c=document.createElement("canvas");c.width=Math.ceil(vp.width);c.height=Math.ceil(vp.height);
         const ctx=c.getContext("2d");
         if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
         await page.render({canvasContext:ctx,viewport:vp,intent:"print"}).promise;
-        outs.push(await canvasBlob(c,mime,q));page.cleanup();
+        out.push({blob:await canvasBlob(c,mime,q),num:pages[k],wPt:vp1.width,hPt:vp1.height});page.cleanup();
       }
     }finally{await doc.destroy();}
-    if(outs.length===1)return outs[0];
-    onP(0.95,"zipping "+outs.length+" images");
+    return {pages:out,total};
+  }
+  async function pdfRaster(file,opts,onP,toExt){
+    const {pages,total}=await renderPdfPages(file,opts,onP,toExt);
+    if(pages.length===1)return pages[0].blob;
+    onP(0.95,"zipping "+pages.length+" images");
     const pad=String(total).length>2?3:2,base=baseOf(file),entries=[];
-    for(let k=0;k<outs.length;k++)entries.push({name:base+"-p"+String(pages[k]).padStart(pad,"0")+"."+toExt,data:new Uint8Array(await outs[k].arrayBuffer())});
+    for(const pg of pages)entries.push({name:base+"-p"+String(pg.num).padStart(pad,"0")+"."+toExt,data:new Uint8Array(await pg.blob.arrayBuffer())});
     return {blob:new Blob([zipStore(entries)],{type:"application/zip"}),name:base+".zip"};
+  }
+  const blobToDataUrl=blob=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob);});
+  async function pdfPptx(file,opts,onP){
+    const Pptx=await loadLib("pptx",onP);
+    const {pages}=await renderPdfPages(file,opts,onP,"png",[0.1,0.8]);
+    onP(0.85,"building the slides");
+    const pres=new Pptx();const w=pages[0].wPt/72,h=pages[0].hPt/72;
+    pres.defineLayout({name:"squish-page",width:w,height:h});pres.layout="squish-page";
+    for(const pg of pages){const slide=pres.addSlide();slide.addImage({data:await blobToDataUrl(pg.blob),x:0,y:0,w:pg.wPt/72,h:pg.hPt/72});}
+    const out=await pres.write({outputType:"blob"});
+    return new Blob([out],{type:"application/vnd.openxmlformats-officedocument.presentationml.presentation"});
   }
 
   /* ---------- HTML -> blocks (DOMParser) ---------- */
@@ -431,6 +448,6 @@
       }
     }
 
-    Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,ffmpeg,imageDecode});
+    Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,pdfPptx,ffmpeg,imageDecode});
     C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;
   })();

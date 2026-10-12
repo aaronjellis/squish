@@ -100,6 +100,9 @@
     {from:["md","txt","html","rtf"], to:["pdf","docx","epub","html","md","txt"], engine:"docs", status:"available", options:[], caveats:[]},
     {from:["csv"], to:["json"], engine:"data", status:"available", options:[], caveats:["The first row becomes the field names. Numbers and true/false are converted."]},
     {from:["json"], to:["csv"], engine:"data", status:"available", options:[], caveats:["Needs an array of objects or rows. Nested objects are written as JSON text inside the cell."]},
+    {from:["pdf"], to:["pptx"], engine:"pdfPptx", status:"available",
+     options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to include every page."}],
+     caveats:["Each page becomes a picture slide. The text isn't editable in PowerPoint."]},
     {from:["pdf"], to:["docx"], engine:"pdfDocx", status:"available", options:[],
      caveats:["⚠ Only works well for PDFs that already have real, selectable text.",
               "If it's scanned pages or pictures of text, Squish can't make it editable. We don't do OCR (that would mean uploading your file).",
@@ -127,7 +130,6 @@
     {from:["dxf","svg","ai","eps","step","stp","iges","igs"], to:["dwg"], engine:null, status:"planned", options:[], caveats:[]},
     {from:["step","stp","iges","igs"], to:["stl","3mf"], engine:null, status:"planned", options:[], caveats:[]},
     {from:["stl","obj","3mf"], to:["step"], engine:null, status:"planned", options:[], caveats:[]},
-    {from:["pdf"], to:["pptx"], engine:null, status:"planned", options:[], caveats:[]},
   ];
 
   const IMPOSSIBLE = [
@@ -285,6 +287,7 @@
     pdfRaster:notLoaded,
     docs:notLoaded,
     pdfDocx:notLoaded,
+    pdfPptx:notLoaded,
     ffmpeg:notLoaded,
   };
 

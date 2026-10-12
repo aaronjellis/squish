@@ -75,7 +75,7 @@ async function run(){
   ok("png→jpg → raster engine", C.findConverter("png","jpg")?.engine==="raster");
   ok("svg→dxf → svgDxf engine", C.findConverter("svg","dxf")?.engine==="svgDxf");
   ok("png→png not offered (same format)", !C.possibleTargets("png").has("png"));
-  ok("pdf→pptx flagged 'planned'", C.possibleTargets("pdf").get("pptx")==="planned");
+  ok("pdf→pptx is available, svg→dwg is planned", C.possibleTargets("pdf").get("pptx")==="available" && C.possibleTargets("svg").get("dwg")==="planned");
   ok("pdf→mp4 is impossible (explained)", !!C.impossibleReason("pdf","mp4"));
   ok("png→webp has no impossible reason", !C.impossibleReason("png","webp"));
 
@@ -239,6 +239,12 @@ async function run(){
   ok("deflated cube.3mf → binary stl of 12 triangles", t.r instanceof Blob && t.r.size===84+50*12, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
   t = await tryEngine("mesh",await fx("cube.stl","model/stl"),{},"obj"); s = t.r instanceof Blob ? await t.r.text() : "";
   ok("cube.stl → obj has 8 vertices", (s.match(/^v /gm)||[]).length===8, t.err?String(t.err.message):"");
+  group("PDF → PowerPoint");
+  t = await tryEngine("pdfPptx",pdfFx,{dpi:"96",pages:""},"pptx");
+  if(t.r instanceof Blob){const pb=new Uint8Array(await t.r.arrayBuffer());const ps=new TextDecoder("latin1").decode(pb);
+    ok("two-page.pdf → pptx is a zip with two slides", ascii(pb.subarray(0,2))==="PK"&&ps.includes("ppt/slides/slide2.xml")&&!ps.includes("ppt/slides/slide3.xml")&&t.r.type.includes("presentationml"), C.fmtBytes(t.r.size));
+    ok("…and it carries the page images", ps.includes("ppt/media/"), "");}
+  else { ok("two-page.pdf → pptx is a zip with two slides", false, String(t.err?.message)); ok("…and it carries the page images", false, ""); }
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

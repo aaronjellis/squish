@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PDFJS=4.10.38; MARKED=15.0.12; DOCX=9.5.1; PDFLIB=1.17.1; FFMPEG=0.12.15; FFUTIL=0.12.2
 FONTKIT=1.1.1; DEJAVU=2.37
-LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3
+LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3; PPTX=4.0.1
 get() { mkdir -p "vendor/$2"; curl -fsSL "https://unpkg.com/$1" -o "vendor/$2/$3" && echo "vendor/$2/$3"; }
 get "pdfjs-dist@$PDFJS/build/pdf.min.mjs"          pdfjs   pdf.min.mjs
 get "pdfjs-dist@$PDFJS/build/pdf.worker.min.mjs"   pdfjs   pdf.worker.min.mjs
@@ -53,6 +53,8 @@ get "utif@$UTIF/UTIF.js" utif UTIF.js
 get "utif@$UTIF/LICENSE" utif LICENSE
 get "ag-psd@$AGPSD/dist/bundle.js" ag-psd bundle.js
 get "ag-psd@$AGPSD/LICENSE" ag-psd LICENSE
+get "pptxgenjs@$PPTX/dist/pptxgen.bundle.js" pptxgenjs pptxgen.bundle.js
+get "pptxgenjs@$PPTX/LICENSE" pptxgenjs LICENSE
 cat > vendor/VERSIONS.md <<MD
 # Vendored libraries
 
@@ -70,6 +72,7 @@ Downloaded by \`scripts/vendor.sh\` from unpkg. Do not edit by hand.
 | libheif-js | $LIBHEIF | libheif/libheif-bundle.mjs (LGPL-3.0, used unmodified as a separate file; see libheif/LICENSE) |
 | utif | $UTIF | utif/UTIF.js (MIT) |
 | ag-psd | $AGPSD | ag-psd/bundle.js (MIT) |
+| pptxgenjs | $PPTX | pptxgenjs/pptxgen.bundle.js (MIT) |
 | dejavu-fonts-ttf | $DEJAVU | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads

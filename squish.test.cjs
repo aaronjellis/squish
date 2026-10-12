@@ -39,7 +39,7 @@ ok("jpeg normalizes to jpg", C.norm("jpeg")==="jpg" && !!C.findConverter("jpeg",
 ok("svg→dxf resolves to svgDxf engine", C.findConverter("svg","dxf")?.engine==="svgDxf");
 ok("png→png is NOT offered (same format)", !C.possibleTargets("png").has("png"));
 ok("possibleTargets(png) includes jpg & webp", C.possibleTargets("png").has("jpg") && C.possibleTargets("png").has("webp"));
-ok("possibleTargets(pdf) marks pptx as planned", C.possibleTargets("pdf").get("pptx")==="planned");
+ok("possibleTargets(pdf) marks pptx as available and dwg as planned", C.possibleTargets("pdf").get("pptx")==="available" && C.possibleTargets("svg").get("dwg")==="planned");
 ok("pdf→docx is available (with caveats)", C.findConverter("pdf","docx")?.status==="available");
 ok("impossible: pdf→mp4 has a reason", !!C.impossibleReason("pdf","mp4"));
 ok("impossible: mp4→docx has a reason", !!C.impossibleReason("mp4","docx"));
@@ -506,6 +506,11 @@ ok("step and iges stay planned, pdf to xlsx is gone", C.possibleTargets("step").
   let msg="";try{await C.ENGINES.mesh(new File(["nonsense"],"x.stl"),{},()=>{},"obj");}catch(e){msg=e.message;}
   ok("an unreadable mesh fails clearly", /couldn't|no triangles/i.test(msg), msg);
 })();
+
+/* ---------- 25. PDF to PowerPoint registry ---------- */
+section("PDF to PowerPoint registry");
+ok("pdf to pptx routes to pdfPptx with sharpness and pages options", (c=>c&&c.engine==="pdfPptx"&&c.options.some(o=>o.key==="dpi")&&c.options.some(o=>o.key==="pages"))(C.findConverter("pdf","pptx")));
+ok("pptx is no longer planned", !C.CONVERTERS.some(c=>c.status==="planned"&&c.to.includes("pptx")));
 
 /* ---------- summary ---------- */
 function finish(){
