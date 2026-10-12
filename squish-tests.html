@@ -187,6 +187,16 @@ async function run(){
   if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"tb.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join(" ");await back.destroy();
     ok("table.md → pdf draws the table cells and the nested item", /Name/.test(txt)&&/34/.test(txt)&&/nested/.test(txt), txt.slice(0,120));}
   else ok("table.md → pdf draws the table cells and the nested item", false, String(t.err?.message));
+  const uniFx = await fx("unicode.md","text/markdown");
+  t = await tryEngine("docs",uniFx,{},"pdf");
+  if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"u.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join("");const ops=await pg.getOperatorList();const pdfjsLib=await C.loadLib("pdfjs");const imgs=ops.fnArray.filter(f=>f===pdfjsLib.OPS.paintImageXObject).length;await back.destroy();
+    ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", /Ωμέγα/.test(txt)&&/Привет/.test(txt)&&/naïve/.test(txt), txt.slice(0,80));
+    ok("…emoji and CJK are drawn as pictures (≥ 2 images)", imgs>=2, imgs+" images");
+    ok("…fonts were subset (under 400 KB)", t.r.size<400*1024, C.fmtBytes(t.r.size));
+    ok("…the font download was labeled", t.labels.some(l=>/fonts/.test(l)), t.labels.join(" | "));}
+  else { ok("unicode.md → pdf keeps Greek, Cyrillic, and accents as real text", false, String(t.err?.message)); }
+  t = await tryEngine("docs",txtFx,{},"pdf");
+  ok("plain ASCII pdf does not download fonts", t.r instanceof Blob && !t.labels.some(l=>/fonts/.test(l)), t.labels.join(" | "));
   t = await tryEngine("docs",mdFx,{},"epub");
   if(t.r instanceof Blob){const eb=new Uint8Array(await t.r.arrayBuffer());const es=new TextDecoder().decode(eb);
     ok("md → epub is a zip with mimetype first", ascii(eb.subarray(0,2))==="PK" && es.slice(30,38)==="mimetype" && t.r.type==="application/epub+zip", C.fmtBytes(t.r.size));

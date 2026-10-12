@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PDFJS=4.10.38; MARKED=15.0.12; DOCX=9.5.1; PDFLIB=1.17.1; FFMPEG=0.12.15; FFUTIL=0.12.2
-get() { mkdir -p "vendor/$2"; curl -fsSL "https://unpkg.com/$1" -o "vendor/$2/$3"; echo "vendor/$2/$3"; }
+FONTKIT=1.1.1; DEJAVU=2.37
+get() { mkdir -p "vendor/$2"; curl -fsSL "https://unpkg.com/$1" -o "vendor/$2/$3" && echo "vendor/$2/$3"; }
 get "pdfjs-dist@$PDFJS/build/pdf.min.mjs"          pdfjs   pdf.min.mjs
 get "pdfjs-dist@$PDFJS/build/pdf.worker.min.mjs"   pdfjs   pdf.worker.min.mjs
 get "marked@$MARKED/lib/marked.esm.js"             marked  marked.esm.js
@@ -15,6 +16,36 @@ done
 for f in index const errors types; do
   get "@ffmpeg/util@$FFUTIL/dist/esm/$f.js" ffmpeg-util "$f.js"
 done
+get "@pdf-lib/fontkit@$FONTKIT/dist/fontkit.umd.min.js" fontkit fontkit.umd.min.js
+# fontkit ships no license file in the npm package; this is its MIT text.
+cat > vendor/fontkit/LICENSE <<LIC
+MIT License
+
+Copyright (c) 2014 Devon Govett
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+LIC
+echo "vendor/fontkit/LICENSE"
+for f in DejaVuSans DejaVuSans-Bold DejaVuSans-Oblique DejaVuSans-BoldOblique DejaVuSansMono; do
+  get "dejavu-fonts-ttf@$DEJAVU/ttf/$f.ttf" dejavu "$f.ttf"
+done
+get "dejavu-fonts-ttf@$DEJAVU/LICENSE" dejavu LICENSE
 cat > vendor/VERSIONS.md <<MD
 # Vendored libraries
 
@@ -28,6 +59,8 @@ Downloaded by \`scripts/vendor.sh\` from unpkg. Do not edit by hand.
 | pdf-lib | $PDFLIB | pdf-lib/pdf-lib.esm.min.js |
 | @ffmpeg/ffmpeg | $FFMPEG | ffmpeg/*.js |
 | @ffmpeg/util | $FFUTIL | ffmpeg-util/*.js |
+| @pdf-lib/fontkit | $FONTKIT | fontkit/fontkit.umd.min.js (MIT) |
+| dejavu-fonts-ttf | $DEJAVU | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads
 from unpkg at runtime because the host caps static files at 25 MiB.

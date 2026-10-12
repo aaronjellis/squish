@@ -87,6 +87,7 @@ write("table.md",`# Table fixture
 
 Some <u>underlined</u> text.
 `);
+write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語\n");
 write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
 <g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
 <polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>

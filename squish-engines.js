@@ -20,13 +20,21 @@
     pdflib:{url:"vendor/pdf-lib/pdf-lib.esm.min.js",label:"the PDF writer"},
     ffmpeg:{url:"vendor/ffmpeg/index.js",label:"the video engine"},
     ffutil:{url:"vendor/ffmpeg-util/index.js",label:"the video engine"},
+    fontkit:{url:"vendor/fontkit/fontkit.umd.min.js",kind:"script",global:"fontkit",label:"the font engine"},
   };
   const loaded={};
+  // UMD builds: inject a script tag and hand back the global it defines.
+  function loadScript(url,global){
+    if(globalThis[global])return Promise.resolve(globalThis[global]);
+    return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=new URL(url,document.baseURI).href;
+      sc.onload=()=>globalThis[global]?res(globalThis[global]):rej(new Error("script loaded but "+global+" is missing"));
+      sc.onerror=()=>rej(new Error("failed to load "+url));document.head.appendChild(sc);});
+  }
   function loadLib(name,onP){
     if(!loaded[name]){
       const lib=LIBS[name];if(!lib)return Promise.reject(new Error("unknown library "+name));
       if(onP)onP(0.02,"loading "+lib.label);
-      loaded[name]=import(new URL(lib.url,document.baseURI).href).catch(e=>{
+      loaded[name]=(lib.kind==="script"?loadScript(lib.url,lib.global):import(new URL(lib.url,document.baseURI).href)).catch(e=>{
         delete loaded[name];throw new Error("Couldn't load "+lib.label+". "+(e&&e.message||e));});
     }
     return loaded[name];
@@ -199,30 +207,70 @@
 
   /* ---------- pdf writer (pdf-lib, Letter, Helvetica) ---------- */
   const BULLET=String.fromCharCode(0x2022);
+  /* ---------- fonts for PDFs: standard Helvetica when the text is WinAnsi, DejaVu otherwise ---------- */
+  const FONT_FILES={r:"DejaVuSans.ttf",b:"DejaVuSans-Bold.ttf",i:"DejaVuSans-Oblique.ttf",bi:"DejaVuSans-BoldOblique.ttf",c:"DejaVuSansMono.ttf"};
+  let fontBytes=null;
+  async function loadFonts(onP){
+    if(fontBytes)return fontBytes;
+    onP(0.3,"downloading fonts (3 MB, first time only)");
+    const out={};
+    for(const [k,f] of Object.entries(FONT_FILES)){const r=await fetch(new URL("vendor/dejavu/"+f,document.baseURI));if(!r.ok)throw new Error("Couldn't load the fonts ("+f+").");out[k]=new Uint8Array(await r.arrayBuffer());}
+    return fontBytes=out;
+  }
+  const allRuns=b=>b.type==="table"?(b.rows||[]).flat():(b.runs||[]);
+  const needsUnicode=blocks=>blocks.some(b=>allRuns(b).some(r=>[...(r.text||"")].some(ch=>ch!=="\t"&&pdfSafeText(ch)!==ch)));
+  const graphemes=str=>typeof Intl!=="undefined"&&Intl.Segmenter?[...new Intl.Segmenter(undefined,{granularity:"grapheme"}).segment(str)].map(g=>g.segment):[...str];
+
   async function blocksToPdf(blocks,title,onP){
     const L=await loadLib("pdflib",onP);onP(0.6,"laying out pages");
     const {PDFDocument,StandardFonts,rgb}=L;
     const pdf=await PDFDocument.create();pdf.setTitle(title||"Document");
-    const F={
-      r:await pdf.embedFont(StandardFonts.Helvetica),b:await pdf.embedFont(StandardFonts.HelveticaBold),
-      i:await pdf.embedFont(StandardFonts.HelveticaOblique),bi:await pdf.embedFont(StandardFonts.HelveticaBoldOblique),
-      c:await pdf.embedFont(StandardFonts.Courier)};
+    const F={};
+    let unicode=false,charSet=null;
+    if(needsUnicode(blocks)){
+      const fk=await loadLib("fontkit",onP);pdf.registerFontkit(fk);
+      const fb=await loadFonts(onP);onP(0.6,"laying out pages");
+      for(const k of Object.keys(FONT_FILES))F[k]=await pdf.embedFont(fb[k],{subset:true});
+      charSet=new Set(F.r.getCharacterSet());unicode=true;
+    }else{
+      F.r=await pdf.embedFont(StandardFonts.Helvetica);F.b=await pdf.embedFont(StandardFonts.HelveticaBold);
+      F.i=await pdf.embedFont(StandardFonts.HelveticaOblique);F.bi=await pdf.embedFont(StandardFonts.HelveticaBoldOblique);
+      F.c=await pdf.embedFont(StandardFonts.Courier);
+    }
     const W=612,H=792,M=72,maxW=W-2*M;
     let page=pdf.addPage([W,H]),y=H-M;
     const newPage=()=>{page=pdf.addPage([W,H]);y=H-M;};
-    const safe=pdfSafeText; // standard fonts only know WinAnsi; see core
+    const safe=unicode?(t=>String(t).replace(/\t/g,"    ")):pdfSafeText;
+    const canDraw=g=>!unicode||[...g].every(ch=>charSet.has(ch.codePointAt(0)));
     const fontFor=(r,bold)=>r.code?F.c:((r.b||bold)&&r.i)?F.bi:(r.b||bold)?F.b:r.i?F.i:F.r;
     const SIZE={h1:22,h2:17,h3:14,p:11,li:11,ol:11,quote:11,code:9.5,hr:11,table:10};
-    const widthOf=w=>w.font.widthOfTextAtSize(w.text,w.size);
-    // runs -> words: tokens with a font, size, and underline flag; newlines become line breaks
-    const tokenize=(runs,size,bold)=>{const words=[];
-      runs.forEach(r=>{const font=fontFor(r,bold);
-        safe(r.text).split(/(\n)/).forEach(part=>{if(part==="\n"){words.push({nl:true});return;}
-          part.split(/(\s+)/).forEach(tok=>{if(tok)words.push({text:tok,font,size,u:!!r.u,space:/^\s+$/.test(tok)});});});});
+    const widthOf=w=>w.img?w.w:w.font.widthOfTextAtSize(w.text,w.size);
+    // Characters no font covers (emoji, CJK) are drawn by the browser with the system font
+    // and embedded as small images, so they look the way they do on screen.
+    const glyphCache=new Map();
+    async function glyphImage(g,size){
+      const key=g+"@"+size;if(glyphCache.has(key))return glyphCache.get(key);
+      const px=Math.ceil(size*3),c=document.createElement("canvas");let ctx=c.getContext("2d");ctx.font=px+"px sans-serif";
+      const w=Math.max(1,Math.ceil(ctx.measureText(g).width)+2),h=Math.ceil(px*1.3);c.width=w;c.height=h;
+      ctx=c.getContext("2d");ctx.font=px+"px sans-serif";ctx.textBaseline="alphabetic";ctx.fillStyle="#000";ctx.fillText(g,1,px);
+      const img=await pdf.embedPng(c.toDataURL("image/png"));
+      const item={img,w:w/3,h:h/3,below:(h-px)/3,size};glyphCache.set(key,item);return item;
+    }
+    // runs -> words: text tokens with a font, size, and underline flag; glyph tokens for undrawable graphemes
+    const tokenize=async(runs,size,bold)=>{const words=[];
+      for(const r of runs){const font=fontFor(r,bold);
+        for(const part of safe(r.text).split(/(\n)/)){if(part==="\n"){words.push({nl:true});continue;}
+          for(const tok of part.split(/(\s+)/)){if(!tok)continue;
+            if(/^\s+$/.test(tok)||canDraw(tok)){words.push({text:tok,font,size,u:!!r.u,space:/^\s+$/.test(tok)});continue;}
+            let buf="";
+            for(const g of graphemes(tok)){
+              if(canDraw(g)){buf+=g;continue;}
+              if(buf){words.push({text:buf,font,size,u:!!r.u});buf="";}
+              words.push({...await glyphImage(g,size),u:!!r.u});}
+            if(buf)words.push({text:buf,font,size,u:!!r.u});}}}
       return words;};
-    // break words into lines that fit; a token wider than the column is split by character
     const layout=(words,avail)=>{const fitted=[];
-      words.forEach(w=>{if(w.nl||w.space||widthOf(w)<=avail){fitted.push(w);return;}
+      words.forEach(w=>{if(w.nl||w.space||w.img||widthOf(w)<=avail){fitted.push(w);return;}
         let chunk="";for(const ch of w.text){if(chunk&&w.font.widthOfTextAtSize(chunk+ch,w.size)>avail){fitted.push({...w,text:chunk});chunk="";}chunk+=ch;}
         if(chunk)fitted.push({...w,text:chunk});});
       const lines=[[]];let lw=0;
@@ -230,7 +278,9 @@
         if(lw+ww>avail&&lines[lines.length-1].length&&!w.space){lines.push([]);lw=0;}
         if(w.space&&lw===0)return;lines[lines.length-1].push(w);lw+=ww;});
       return lines;};
-    const drawWords=(line,x,baseY,color)=>{line.forEach(w=>{page.drawText(w.text,{x,y:baseY,size:w.size,font:w.font,color});const ww=widthOf(w);
+    const drawWords=(line,x,baseY,color)=>{line.forEach(w=>{const ww=widthOf(w);
+      if(w.img)page.drawImage(w.img,{x,y:baseY-w.below,width:w.w,height:w.h});
+      else page.drawText(w.text,{x,y:baseY,size:w.size,font:w.font,color});
       if(w.u&&!w.space)page.drawLine({start:{x,y:baseY-1.5},end:{x:x+ww,y:baseY-1.5},thickness:0.6,color});x+=ww;});};
     let counters=[];
     for(const b of blocks){
@@ -240,21 +290,21 @@
       if(b.type==="table"){
         const rows=b.rows||[];if(!rows.length)continue;
         const cols=Math.max(1,...rows.map(r=>r.length)),colW=maxW/cols,pad=3,tsize=SIZE.table,tlead=tsize*1.3;
-        rows.forEach((r,ri)=>{
-          const cellLines=r.map(c=>layout(tokenize(c,tsize,b.header&&ri===0),colW-2*pad));
+        for(let ri=0;ri<rows.length;ri++){const r=rows[ri];
+          const cellLines=[];for(const c of r)cellLines.push(layout(await tokenize(c,tsize,b.header&&ri===0),colW-2*pad));
           const rowH=Math.max(1,...cellLines.map(l=>l.length))*tlead+2*pad;
           if(y-rowH<M)newPage();
           cellLines.forEach((lines,ci)=>{const x=M+ci*colW;
             page.drawRectangle({x,y:y-rowH,width:colW,height:rowH,borderWidth:0.5,borderColor:rgb(0.7,0.7,0.7)});
             lines.forEach((line,k)=>drawWords(line,x+pad,y-pad-tsize-k*tlead,rgb(0,0,0)));});
-          y-=rowH;});
+          y-=rowH;}
         y-=lead*0.5;continue;}
       let indent=0,prefix="";
       if(b.type==="li"){indent=18*(lvl+1);prefix=BULLET+"  ";}
       if(b.type==="ol"){indent=18*(lvl+1);prefix=counters[lvl]+".  ";}
       if(b.type==="quote")indent=24;
       const runs=b.type==="code"?[{text:runsText(b.runs),code:true}]:b.runs;
-      const words=tokenize(runs,size,/^h[1-3]$/.test(b.type));
+      const words=await tokenize(runs,size,/^h[1-3]$/.test(b.type));
       if(prefix)words.unshift({text:prefix,font:F.r,size});
       const lines=layout(words,maxW-indent);
       if(/^h[1-3]$/.test(b.type))y-=size*0.5;
