@@ -10,7 +10,7 @@
   const C=globalThis.SquishCore;
   if(!C)throw new Error("squish-core.js must load before squish-engines.js");
   const {norm,extOf,canvasBlob,mimeFor,parsePageRange,zipStore,runsText,blocksFromText,rtfToBlocks,
-    blocksToHtml,blocksToMd,blocksToTxt,epubEntries,pdfTextToBlocks,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME,decodeText}=C;
+    blocksToHtml,blocksToMd,blocksToTxt,epubEntries,pdfTextToBlocks,throwIfAborted,pdfSafeText,ffmpegArgs,trimError,MEDIA_MIME,decodeText}=C;
 
   /* ---------- lazy library loading ---------- */
   const LIBS={
@@ -96,7 +96,8 @@
     throw new Error("Squish can't read ."+from+" files.");
   }
   async function imageDecode(file,opts,onP,toExt){
-    const from=norm(extOf(file.name));const src=await decodeToCanvas(file,from,onP);onP(0.7,"encoding");
+    throwIfAborted(opts.signal);
+    const from=norm(extOf(file.name));const src=await decodeToCanvas(file,from,onP);throwIfAborted(opts.signal);onP(0.7,"encoding");
     const scale=parseFloat(opts.resize||"1"),c=document.createElement("canvas");
     c.width=Math.max(1,Math.round(src.width*scale));c.height=Math.max(1,Math.round(src.height*scale));
     const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
@@ -117,6 +118,7 @@
   }
   // Renders the requested pages to image blobs. Shared by pdfRaster and pdfPptx.
   async function renderPdfPages(file,opts,onP,toExt,progressSpan){
+    throwIfAborted(opts.signal);
     const doc=await C.openPdf(file,onP);
     const out=[];let pages,total;const [p0,p1]=progressSpan||[0.1,0.9];
     try{
@@ -124,6 +126,7 @@
       if(!pages.length)throw new Error('No pages matched "'+opts.pages+'". This PDF has '+total+(total===1?" page.":" pages."));
       const scale=parseInt(opts.dpi||"150",10)/72,mime=mimeFor(toExt),q=toExt==="jpg"?0.9:undefined;
       for(let k=0;k<pages.length;k++){
+        throwIfAborted(opts.signal);
         onP(p0+(p1-p0)*(k/pages.length),"rendering page "+pages[k]+" of "+total);
         const page=await doc.getPage(pages[k]);const vp=page.getViewport({scale}),vp1=page.getViewport({scale:1});
         const c=document.createElement("canvas");c.width=Math.ceil(vp.width);c.height=Math.ceil(vp.height);
@@ -145,6 +148,7 @@
   }
   const blobToDataUrl=blob=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob);});
   async function pdfPptx(file,opts,onP){
+    throwIfAborted(opts.signal);
     const Pptx=await loadLib("pptx",onP);
     const {pages}=await renderPdfPages(file,opts,onP,"png",[0.1,0.8]);
     onP(0.85,"building the slides");
@@ -217,7 +221,8 @@
     return blocksFromText(text);
   }
   async function docs(file,opts,onP,toExt){
-    const blocks=await parseDoc(file,onP);
+    throwIfAborted(opts.signal);
+    const blocks=await parseDoc(file,onP);throwIfAborted(opts.signal);
     if(!blocks.length)throw new Error("Squish couldn't find any text in that file.");
     onP(0.4,"rebuilding the document");
     const title=baseOf(file);
@@ -383,9 +388,11 @@
 
   /* ---------- pdf -> docx ---------- */
   async function pdfDocx(file,opts,onP){
+    throwIfAborted(opts.signal);
     const doc=await C.openPdf(file,onP);const total=doc.numPages,pages=[];
     try{
       for(let i=1;i<=total;i++){
+        throwIfAborted(opts.signal);
         onP(0.1+0.5*(i/total),"reading page "+i+" of "+total);
         const page=await doc.getPage(i);const tc=await page.getTextContent();
         pages.push(tc.items.filter(it=>typeof it.str==="string").map(it=>({
@@ -419,35 +426,44 @@
     })().catch(e=>{ffLoading=null;throw new Error("Couldn't download the video engine. Check your connection and try again. "+(e&&e.message||e));});
     return ffLoading;
   }
+  const abortPromise=signal=>new Promise((_,rej)=>{if(!signal)return;const fail=()=>{const e=new Error("Cancelled. Nothing was changed.");e.cancelled=true;rej(e);};
+    if(signal.aborted)fail();else signal.addEventListener("abort",fail,{once:true});});
   async function ffmpeg(file,opts,onP,toExt){
     const badTrim=trimError(opts.trim);
     if(badTrim)throw new Error(badTrim);
-    const ff=await getFFmpeg(onP);
+    const signal=opts.signal;throwIfAborted(signal);
+    // The shared download keeps going if the user cancels; only this conversion stops.
+    const ff=await (signal?Promise.race([getFFmpeg(onP),abortPromise(signal)]):getFFmpeg(onP));
     const from=norm(extOf(file.name)),inName="in."+from,outName="out."+toExt;
     const onProg=({progress})=>onP(0.12+0.83*Math.max(0,Math.min(1,progress||0)),"converting on your device");
     ff.on("progress",onProg);
+    const dropInstance=()=>{try{ff.terminate();}catch(e){}if(ffInstance===ff){ffInstance=null;ffLoading=null;}};
+    const onAbort=()=>dropInstance();
+    if(signal)signal.addEventListener("abort",onAbort,{once:true});
     try{
-        onP(0.11,"loading your file");
-        await ff.writeFile(inName,new Uint8Array(await file.arrayBuffer()));
-        let rc;
-        try{rc=await ff.exec(ffmpegArgs(from,toExt,opts,inName,outName));}
-        catch(e){
-          // exec only rejects when the wasm runtime died (out of memory, abort). A dead
-          // instance can't run anything else, so drop it; the next call loads a fresh one.
-          try{ff.terminate();}catch(_){}
-          if(ffInstance===ff){ffInstance=null;ffLoading=null;}
-          throw e;
-        }
-        if(rc!==0)throw new Error("The video engine stopped with code "+rc+". The file may be damaged or use a codec this build can't read.");
-        const data=await ff.readFile(outName);
-        if(!data||!data.length)throw new Error("The video engine produced an empty file.");
-        return new Blob([data],{type:MEDIA_MIME[toExt]||"application/octet-stream"});
-      }finally{
-        ff.off("progress",onProg);
-        if(ff.loaded)for(const n of [inName,outName]){try{await ff.deleteFile(n);}catch(e){}}
+      onP(0.11,"loading your file");
+      throwIfAborted(signal);
+      await ff.writeFile(inName,new Uint8Array(await file.arrayBuffer()));
+      let rc;
+      try{rc=await ff.exec(ffmpegArgs(from,toExt,opts,inName,outName));}
+      catch(e){
+        // exec only rejects when the wasm runtime died (out of memory, abort, or our cancel).
+        dropInstance();
+        if(signal&&signal.aborted)throwIfAborted(signal);
+        throw e;
       }
+      throwIfAborted(signal);
+      if(rc!==0)throw new Error("The video engine stopped with code "+rc+". The file may be damaged or use a codec this build can't read.");
+      const data=await ff.readFile(outName);
+      if(!data||!data.length)throw new Error("The video engine produced an empty file.");
+      return new Blob([data],{type:MEDIA_MIME[toExt]||"application/octet-stream"});
+    }finally{
+      if(signal)signal.removeEventListener("abort",onAbort);
+      ff.off("progress",onProg);
+      if(ff.loaded)for(const n of [inName,outName]){try{await ff.deleteFile(n);}catch(e){}}
     }
+  }
 
-    Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,pdfPptx,ffmpeg,imageDecode});
-    C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;
-  })();
+  Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,pdfPptx,ffmpeg,imageDecode});
+  C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;
+})();

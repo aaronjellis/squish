@@ -66,3 +66,15 @@ test("app: a malformed trim explains the format",async({page})=>{
   await expect(page.locator("#resultTitle")).toHaveText("hmm, that didn't work",{timeout:60000});
   await expect(page.locator("#resultSub")).toContainText("m:ss-m:ss");
 });
+
+test("app: cancel returns to the options and the next convert works",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("one-second.wav"));
+  const input=page.locator("#targetInput");await input.fill(".mp3");await input.press("Enter");
+  await page.locator("#convertBtn").click();
+  await page.locator("#cancelBtn").click();
+  await expect(page.locator("#cancelNote")).toContainText("Cancelled",{timeout:15000});
+  await expect(page.locator("#result")).not.toHaveClass(/show/);
+  await page.locator("#convertBtn").click();
+  await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:120000});
+});

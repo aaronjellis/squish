@@ -245,6 +245,12 @@ async function run(){
     ok("two-page.pdf → pptx is a zip with two slides", ascii(pb.subarray(0,2))==="PK"&&ps.includes("ppt/slides/slide2.xml")&&!ps.includes("ppt/slides/slide3.xml")&&t.r.type.includes("presentationml"), C.fmtBytes(t.r.size));
     ok("…and it carries the page images", ps.includes("ppt/media/"), "");}
   else { ok("two-page.pdf → pptx is a zip with two slides", false, String(t.err?.message)); ok("…and it carries the page images", false, ""); }
+  group("Cancellation");
+  {const ac=new AbortController();ac.abort();
+   t = await tryEngine("pdfRaster",pdfFx,{dpi:"96",pages:"",signal:ac.signal},"png");
+   ok("pdfRaster rejects at once with an aborted signal", t.err && t.err.cancelled===true, String(t.err?.message||"no error"));
+   t = await tryEngine("docs",mdFx,{signal:ac.signal},"html");
+   ok("docs rejects with an aborted signal", t.err && t.err.cancelled===true, String(t.err?.message||"no error"));}
   group("PDF → Word (text layer)");
   t = await tryEngine("pdfDocx",pdfFx,{},"docx");
   ok("two-page.pdf → docx is a Word file", t.r instanceof Blob && ascii(await head(t.r,2))==="PK" && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
@@ -295,6 +301,12 @@ async function run(){
     ok("mp4 → mov has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp" && t.r.type==="video/quicktime", t.err?String(t.err.message):"");
     t = await tryEngine("ffmpeg",mp4Fx,{},"m4a");
     ok("mp4 → m4a has an ftyp box", t.r instanceof Blob && ascii((await head(t.r,8)).subarray(4,8))==="ftyp", t.err?String(t.err.message):"");
+    // cancel mid-run, then convert again
+    {const ac=new AbortController();t={err:null,labels:[]};
+     try{await C.ENGINES.ffmpeg(wavFx,{quality:"85",signal:ac.signal},(f,l)=>{if(l==="loading your file")ac.abort();},"mp3");}catch(e){t.err=e;}
+     ok("cancelling an ffmpeg run reports a cancelled error", !!(t.err&&t.err.cancelled), String(t.err?.message||"finished before the abort"));
+     t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"mp3");
+     ok("the conversion after a cancel succeeds", t.r instanceof Blob && t.r.size>0, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));}
     // 4. a crashed engine must not wedge later conversions
     const ffBefore = await C.getFFmpeg(noP); const realExec = ffBefore.exec; ffBefore.exec = () => Promise.reject(new Error("simulated wasm abort"));
     t = await tryEngine("ffmpeg",wavFx,{quality:"85"},"mp3");

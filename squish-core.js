@@ -267,12 +267,14 @@
       const dxf=api.svgToDxf(txt,opts.curveMode||"splines",parseFloat(opts.tolerance||"0.5"));onP(.9);
       return new Blob([dxf],{type:"application/dxf"});},
     async data(file,opts,onP,toExt){
+      throwIfAborted(opts&&opts.signal);
       const text=decodeText(new Uint8Array(await file.arrayBuffer()));onP(0.5,"reading the data");
       if(toExt==="json")return new Blob([csvToJson(text)],{type:"application/json"});
       if(toExt==="csv")return new Blob([jsonToCsv(text)],{type:"text/csv"});
       throw new Error("Squish can't write ."+toExt+" from this file.");
     },
     async mesh(file,opts,onP,toExt){
+      throwIfAborted(opts&&opts.signal);
       const from=norm(extOf(file.name)),bytes=new Uint8Array(await file.arrayBuffer());onP(0.2,"reading the mesh");
       let m;
       if(from==="stl")m=parseStl(bytes);else if(from==="obj")m=parseObj(decodeText(bytes));else if(from==="3mf")m=await parse3mf(bytes);
@@ -417,6 +419,9 @@
       L.push("0","SPLINE","8","0","210","0","220","0","230","1","70","8","71",k,"72",knots.length,"73",n,"74","0");
       knots.forEach(kn=>L.push("40",kn));ctrl.forEach(([x,y])=>L.push("10",x,"20",Y(y),"30","0"));});
     L.push("0","ENDSEC","0","EOF");return L.join("\n");}
+
+  /* ---------- Cancellation ---------- */
+  function throwIfAborted(signal){if(signal&&signal.aborted){const e=new Error("Cancelled. Nothing was changed.");e.cancelled=true;throw e;}}
 
   /* ---------- Text decoding: BOMs, strict UTF-8, Windows-1252 fallback ---------- */
   // Bytes 0x80..0x9F are Windows-1252 punctuation, not C1 controls. Mapped by hand because
@@ -845,7 +850,7 @@
 
   /* ---------- exports ---------- */
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
-    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
+    norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,throwIfAborted,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};

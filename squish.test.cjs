@@ -512,6 +512,16 @@ section("PDF to PowerPoint registry");
 ok("pdf to pptx routes to pdfPptx with sharpness and pages options", (c=>c&&c.engine==="pdfPptx"&&c.options.some(o=>o.key==="dpi")&&c.options.some(o=>o.key==="pages"))(C.findConverter("pdf","pptx")));
 ok("pptx is no longer planned", !C.CONVERTERS.some(c=>c.status==="planned"&&c.to.includes("pptx")));
 
+/* ---------- 26. Cancellation ---------- */
+section("Cancellation");
+ok("throwIfAborted is quiet without a signal", (()=>{try{C.throwIfAborted(undefined);C.throwIfAborted(new AbortController().signal);return true;}catch(e){return false;}})());
+ok("throwIfAborted throws a cancelled error for an aborted signal", (()=>{const ac=new AbortController();ac.abort();try{C.throwIfAborted(ac.signal);return false;}catch(e){return e.cancelled===true&&/Cancelled/.test(e.message);}})());
+(async()=>{const ac=new AbortController();ac.abort();let msg="";
+  try{await C.ENGINES.data(new File(["a,b"],"t.csv"),{signal:ac.signal},()=>{},"json");}catch(e){msg=e.message;}
+  ok("the data engine honors an aborted signal", /Cancelled/.test(msg), msg);
+  try{await C.ENGINES.mesh(new File([C.toStl({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]})],"t.stl"),{signal:ac.signal},()=>{},"obj");msg="";}catch(e){msg=e.message;}
+  ok("the mesh engine honors an aborted signal", /Cancelled/.test(msg), msg);})();
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
