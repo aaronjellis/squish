@@ -176,6 +176,17 @@ async function run(){
   ok("Latin-1 text decodes (accents and curly quotes)", s.includes("caf"+String.fromCharCode(0xe9))&&s.includes(String.fromCharCode(0x201c)+"quoted"+String.fromCharCode(0x201d)), t.err?String(t.err.message):s.slice(-80));
   t = await tryEngine("docs",new File([""],"empty.txt",{type:"text/plain"}),{},"html");
   ok("empty input fails clearly", t.err && /couldn't find any text/i.test(t.err.message), String(t.err?.message));
+  const tableFx = await fx("table.md","text/markdown");
+  t = await tryEngine("docs",tableFx,{},"html"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("table.md → html has a thead, a nested list, and underline", s.includes("<thead>")&&s.includes("<ul>\n<li>top\n<ul>")&&s.includes("<u>underlined</u>"), t.err?String(t.err.message):s.slice(-300));
+  t = await tryEngine("docs",tableFx,{},"md"); s = t.r instanceof Blob ? await t.r.text() : "";
+  ok("table.md → md has a pipe table and an indented item", s.includes("| --- | --- |")&&s.includes("| Ann | 34 |")&&s.includes("\n  - nested"), t.err?String(t.err.message):s);
+  t = await tryEngine("docs",tableFx,{},"docx");
+  ok("table.md → docx builds", t.r instanceof Blob && t.r.size>2048, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
+  t = await tryEngine("docs",tableFx,{},"pdf");
+  if(t.r instanceof Blob){const back=await C.openPdf(new File([t.r],"tb.pdf",{type:"application/pdf"}),noP);const pg=await back.getPage(1);const tc=await pg.getTextContent();const txt=tc.items.map(i=>i.str).join(" ");await back.destroy();
+    ok("table.md → pdf draws the table cells and the nested item", /Name/.test(txt)&&/34/.test(txt)&&/nested/.test(txt), txt.slice(0,120));}
+  else ok("table.md → pdf draws the table cells and the nested item", false, String(t.err?.message));
   t = await tryEngine("docs",mdFx,{},"epub");
   if(t.r instanceof Blob){const eb=new Uint8Array(await t.r.arrayBuffer());const es=new TextDecoder().decode(eb);
     ok("md → epub is a zip with mimetype first", ascii(eb.subarray(0,2))==="PK" && es.slice(30,38)==="mimetype" && t.r.type==="application/epub+zip", C.fmtBytes(t.r.size));

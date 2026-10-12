@@ -74,6 +74,19 @@ write("people.csv",'name,city,note\nAnn,Oslo,"likes tea, not coffee"\nBo,Lima,\n
 write("people.json",JSON.stringify([{name:"Ann",city:"Oslo",age:34},{name:"Bo",city:"Lima",age:27}],null,2)+"\n");
 // A 1x1 AVIF (libavif test image) so the browser decode path has an input.
 write("fx.avif",Buffer.from("AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADybWV0YQAAAAAAAAAoaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAeaWxvYwAAAABEAAABAAEAAAABAAABGgAAABgAAAAoaWluZgAAAAAAAQAAABppbmZlAgAAAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAAABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgQAMAAAAABNjb2xybmNseAACAAIABoAAAAAXaXBtYQAAAAAAAAABAAEEAQKDBAAAACBtZGF0EgAKCBgABogQEAwgMgwf8AAAWAAAAAAs","base64"));
+write("table.md",`# Table fixture
+
+| Name | Age |
+| --- | --- |
+| Ann | 34 |
+| Bo | 27 |
+
+- top
+  - nested
+- back
+
+Some <u>underlined</u> text.
+`);
 write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
 <g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
 <polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>

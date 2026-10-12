@@ -94,7 +94,7 @@
   function blocksFromHtml(html){
     const doc=new DOMParser().parseFromString(html,"text/html");const blocks=[];
     const SKIP=new Set(["script","style","head","title","nav","template","noscript","meta","link"]);
-    const CONTAINERS=new Set(["div","section","article","main","body","html","header","footer","aside","table","tbody","thead","tr","td","th","figure","details","summary","center","font"]);
+    const CONTAINERS=new Set(["div","section","article","main","body","html","header","footer","aside","figure","details","summary","center","font","span"]);
     const inline=(node,st,runs)=>{node.childNodes.forEach(n=>{
       if(n.nodeType===3){const t=n.textContent.replace(/\s+/g," ");if(t)runs.push({text:t,...st});return;}
       if(n.nodeType!==1)return;
@@ -103,11 +103,12 @@
       if(tag==="img"){runs.push({text:imgText(n),...st});return;}
       if(SKIP.has(tag))return;
       const s={...st};
-      if(tag==="b"||tag==="strong")s.b=true;if(tag==="i"||tag==="em")s.i=true;if(tag==="code")s.code=true;
+      if(tag==="b"||tag==="strong")s.b=true;if(tag==="i"||tag==="em")s.i=true;if(tag==="code")s.code=true;if(tag==="u"||tag==="ins")s.u=true;
       if(tag==="a"&&n.getAttribute("href"))s.href=n.getAttribute("href");
       inline(n,s,runs);});};
-    const push=(type,node)=>{const runs=[];inline(node,{},runs);const t=trimRuns(runs);if(t.length)blocks.push({type,runs:t});};
-    const walk=(node,listType)=>{node.childNodes.forEach(n=>{
+    const runsOfNode=node=>{const runs=[];inline(node,{},runs);return trimRuns(runs);};
+    const push=(type,node,extra)=>{const t=runsOfNode(node);if(t.length)blocks.push({type,...(extra||{}),runs:t});};
+    const walk=(node,listType,level)=>{node.childNodes.forEach(n=>{
       if(n.nodeType===3){const t=n.textContent.trim();if(t)blocks.push({type:"p",runs:[{text:t}]});return;}
       if(n.nodeType!==1)return;
       const tag=n.tagName.toLowerCase();
@@ -118,15 +119,19 @@
       else if(tag==="blockquote")push("quote",n);
       else if(tag==="hr")blocks.push({type:"hr",runs:[]});
       else if(tag==="img")blocks.push({type:"p",runs:[{text:imgText(n)}]});
-      else if(tag==="ul"||tag==="ol")walk(n,tag==="ul"?"li":"ol");
+      else if(tag==="ul"||tag==="ol")walk(n,tag==="ul"?"li":"ol",listType==null?0:level+1);
       else if(tag==="li"){
         const nested=[...n.children].filter(c=>/^(ul|ol)$/i.test(c.tagName));
         const clone=n.cloneNode(true);[...clone.children].forEach(c=>{if(/^(ul|ol)$/i.test(c.tagName))c.remove();});
-        push(listType||"li",clone);
-        nested.forEach(c=>walk(c,c.tagName.toLowerCase()==="ul"?"li":"ol"));}
-      else if(CONTAINERS.has(tag))walk(n,listType);
+        push(listType||"li",clone,{level:level||0});
+        nested.forEach(c=>walk(c,c.tagName.toLowerCase()==="ul"?"li":"ol",(level||0)+1));}
+      else if(tag==="table"){
+        const trs=[...n.querySelectorAll("tr")].filter(tr=>tr.closest("table")===n);
+        const rows=trs.map(tr=>[...tr.children].filter(c=>/^(td|th)$/i.test(c.tagName)).map(c=>{const r=runsOfNode(c);return r.length?r:[{text:""}];}));
+        if(rows.length){const header=[...trs[0].children].every(c=>c.tagName.toLowerCase()==="th");blocks.push({type:"table",header,rows});}}
+      else if(CONTAINERS.has(tag))walk(n,listType,level);
       else push("p",n);});};
-    walk(doc.body,null);
+    walk(doc.body,null,0);
     return blocks;
   }
 
@@ -157,30 +162,35 @@
   async function blocksToDocx(blocks,onP){
     const mod=await loadLib("docx",onP);onP(0.6,"writing the Word file");
     const d=mod.Document?mod:mod.default;
-    const {Document,Packer,Paragraph,TextRun,HeadingLevel,ExternalHyperlink,AlignmentType,BorderStyle}=d;
-    const runsOf=b=>b.runs.map(r=>{
-      const base={text:flatText(r.text),bold:!!r.b,italics:!!r.i};
-      if(r.code)base.font="Courier New";
+    const {Document,Packer,Paragraph,TextRun,HeadingLevel,ExternalHyperlink,AlignmentType,BorderStyle,Table,TableRow,TableCell,WidthType}=d;
+    const runsOf=(runs,bold)=>runs.map(r=>{
+      const base={text:flatText(r.text),bold:!!r.b||!!bold,italics:!!r.i};
+      if(r.u)base.underline={};if(r.code)base.font="Courier New";
       if(r.href)return new ExternalHyperlink({link:r.href,children:[new TextRun({...base,style:"Hyperlink"})]});
       return new TextRun(base);
     });
-    let listInstance=0,inList=false;
-    const children=blocks.map(b=>{
-      if(b.type==="ol"){if(!inList){listInstance++;inList=true;}}else inList=false;
+    let listInstance=0,inList=false;const children=[];
+    blocks.forEach(b=>{
+      if(b.type==="ol"){if(!inList){listInstance++;inList=true;}}else if(b.type!=="li")inList=false;
+      const lvl=Math.min(b.level||0,2);
       switch(b.type){
-        case "h1":return new Paragraph({heading:HeadingLevel.HEADING_1,children:runsOf(b)});
-        case "h2":return new Paragraph({heading:HeadingLevel.HEADING_2,children:runsOf(b)});
-        case "h3":return new Paragraph({heading:HeadingLevel.HEADING_3,children:runsOf(b)});
-        case "li":return new Paragraph({bullet:{level:0},children:runsOf(b)});
-        case "ol":return new Paragraph({numbering:{reference:"squish-numbers",level:0,instance:listInstance},children:runsOf(b)});
-        case "code":return new Paragraph({children:runsText(b.runs).split("\n").map((line,i)=>new TextRun(i?{text:line,font:"Courier New",size:20,break:1}:{text:line,font:"Courier New",size:20}))});
-        case "quote":return new Paragraph({indent:{left:720},children:runsOf(b)});
-        case "hr":return new Paragraph({border:{bottom:{style:BorderStyle.SINGLE,size:6,color:"999999",space:1}},children:[]});
-        default:return new Paragraph({children:runsOf(b)});
+        case "h1":children.push(new Paragraph({heading:HeadingLevel.HEADING_1,children:runsOf(b.runs)}));break;
+        case "h2":children.push(new Paragraph({heading:HeadingLevel.HEADING_2,children:runsOf(b.runs)}));break;
+        case "h3":children.push(new Paragraph({heading:HeadingLevel.HEADING_3,children:runsOf(b.runs)}));break;
+        case "li":children.push(new Paragraph({bullet:{level:lvl},children:runsOf(b.runs)}));break;
+        case "ol":children.push(new Paragraph({numbering:{reference:"squish-numbers",level:lvl,instance:listInstance},children:runsOf(b.runs)}));break;
+        case "code":children.push(new Paragraph({children:runsText(b.runs).split("\n").map((line,i)=>new TextRun(i?{text:line,font:"Courier New",size:20,break:1}:{text:line,font:"Courier New",size:20}))}));break;
+        case "quote":children.push(new Paragraph({indent:{left:720},children:runsOf(b.runs)}));break;
+        case "hr":children.push(new Paragraph({border:{bottom:{style:BorderStyle.SINGLE,size:6,color:"999999",space:1}},children:[]}));break;
+        case "table":{const rows=b.rows||[];if(!rows.length)break;
+          children.push(new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:rows.map((r,ri)=>new TableRow({tableHeader:!!(b.header&&ri===0),
+            children:r.map(c=>new TableCell({children:[new Paragraph({children:runsOf(c,b.header&&ri===0)})]}))}))}));
+          children.push(new Paragraph({children:[]}));break;}
+        default:children.push(new Paragraph({children:runsOf(b.runs)}));
       }
     });
     const doc=new Document({
-      numbering:{config:[{reference:"squish-numbers",levels:[{level:0,format:"decimal",text:"%1.",alignment:AlignmentType.START,style:{paragraph:{indent:{left:720,hanging:360}}}}]}]},
+      numbering:{config:[{reference:"squish-numbers",levels:[0,1,2].map(l=>({level:l,format:l===1?"lowerLetter":l===2?"lowerRoman":"decimal",text:"%"+(l+1)+".",alignment:AlignmentType.START,style:{paragraph:{indent:{left:720*(l+1),hanging:360}}}}))}]},
       sections:[{children}],
     });
     const blob=await Packer.toBlob(doc);
@@ -201,48 +211,57 @@
     let page=pdf.addPage([W,H]),y=H-M;
     const newPage=()=>{page=pdf.addPage([W,H]);y=H-M;};
     const safe=pdfSafeText; // standard fonts only know WinAnsi; see core
-    const fontFor=r=>r.code?F.c:(r.b&&r.i)?F.bi:r.b?F.b:r.i?F.i:F.r;
-    const SIZE={h1:22,h2:17,h3:14,p:11,li:11,ol:11,quote:11,code:9.5,hr:11};
-    let n=0;
-    blocks.forEach(b=>{
-      const size=SIZE[b.type]||11,lead=size*1.4;
-      if(b.type==="ol")n++;else n=0;
-      if(b.type==="hr"){if(y-lead<M)newPage();page.drawLine({start:{x:M,y:y-6},end:{x:W-M,y:y-6},thickness:0.7,color:rgb(0.6,0.6,0.6)});y-=lead;return;}
-      let indent=0,prefix="";
-      if(b.type==="li"){indent=18;prefix=BULLET+"  ";}
-      if(b.type==="ol"){indent=18;prefix=n+".  ";}
-      if(b.type==="quote")indent=24;
-      const words=[];
-      if(prefix)words.push({text:prefix,font:F.r,size});
-      const runs=b.type==="code"?[{text:runsText(b.runs),code:true}]:b.runs;
-      runs.forEach(r=>{const font=/^h[1-3]$/.test(b.type)?(r.i?F.bi:F.b):fontFor(r);
-        safe(r.text).split(/(\n)/).forEach(part=>{
-          if(part==="\n"){words.push({nl:true});return;}
-          part.split(/(\s+)/).forEach(tok=>{if(tok)words.push({text:tok,font,size,space:/^\s+$/.test(tok)});});});});
-      const lines=[[]];let lw=0;const x0=M+indent,avail=maxW-indent;
-      // split any single token wider than the column so it wraps instead of running off the page
-      const fitted=[];
-      words.forEach(w=>{
-        if(w.nl||w.space||w.font.widthOfTextAtSize(w.text,w.size)<=avail){fitted.push(w);return;}
-        let chunk="";
-        for(const ch of w.text){if(chunk&&w.font.widthOfTextAtSize(chunk+ch,w.size)>avail){fitted.push({...w,text:chunk});chunk="";}chunk+=ch;}
-        if(chunk)fitted.push({...w,text:chunk});
-      });
-      fitted.forEach(w=>{
-        if(w.nl){lines.push([]);lw=0;return;}
-        const ww=w.font.widthOfTextAtSize(w.text,w.size);
+    const fontFor=(r,bold)=>r.code?F.c:((r.b||bold)&&r.i)?F.bi:(r.b||bold)?F.b:r.i?F.i:F.r;
+    const SIZE={h1:22,h2:17,h3:14,p:11,li:11,ol:11,quote:11,code:9.5,hr:11,table:10};
+    const widthOf=w=>w.font.widthOfTextAtSize(w.text,w.size);
+    // runs -> words: tokens with a font, size, and underline flag; newlines become line breaks
+    const tokenize=(runs,size,bold)=>{const words=[];
+      runs.forEach(r=>{const font=fontFor(r,bold);
+        safe(r.text).split(/(\n)/).forEach(part=>{if(part==="\n"){words.push({nl:true});return;}
+          part.split(/(\s+)/).forEach(tok=>{if(tok)words.push({text:tok,font,size,u:!!r.u,space:/^\s+$/.test(tok)});});});});
+      return words;};
+    // break words into lines that fit; a token wider than the column is split by character
+    const layout=(words,avail)=>{const fitted=[];
+      words.forEach(w=>{if(w.nl||w.space||widthOf(w)<=avail){fitted.push(w);return;}
+        let chunk="";for(const ch of w.text){if(chunk&&w.font.widthOfTextAtSize(chunk+ch,w.size)>avail){fitted.push({...w,text:chunk});chunk="";}chunk+=ch;}
+        if(chunk)fitted.push({...w,text:chunk});});
+      const lines=[[]];let lw=0;
+      fitted.forEach(w=>{if(w.nl){lines.push([]);lw=0;return;}const ww=widthOf(w);
         if(lw+ww>avail&&lines[lines.length-1].length&&!w.space){lines.push([]);lw=0;}
-        if(w.space&&lw===0)return;
-        lines[lines.length-1].push(w);lw+=ww;});
+        if(w.space&&lw===0)return;lines[lines.length-1].push(w);lw+=ww;});
+      return lines;};
+    const drawWords=(line,x,baseY,color)=>{line.forEach(w=>{page.drawText(w.text,{x,y:baseY,size:w.size,font:w.font,color});const ww=widthOf(w);
+      if(w.u&&!w.space)page.drawLine({start:{x,y:baseY-1.5},end:{x:x+ww,y:baseY-1.5},thickness:0.6,color});x+=ww;});};
+    let counters=[];
+    for(const b of blocks){
+      const size=SIZE[b.type]||11,lead=size*1.4,lvl=b.level||0;
+      if(b.type==="ol"){counters=counters.slice(0,lvl+1);counters[lvl]=(counters[lvl]||0)+1;}else if(b.type!=="li")counters=[];
+      if(b.type==="hr"){if(y-lead<M)newPage();page.drawLine({start:{x:M,y:y-6},end:{x:W-M,y:y-6},thickness:0.7,color:rgb(0.6,0.6,0.6)});y-=lead;continue;}
+      if(b.type==="table"){
+        const rows=b.rows||[];if(!rows.length)continue;
+        const cols=Math.max(1,...rows.map(r=>r.length)),colW=maxW/cols,pad=3,tsize=SIZE.table,tlead=tsize*1.3;
+        rows.forEach((r,ri)=>{
+          const cellLines=r.map(c=>layout(tokenize(c,tsize,b.header&&ri===0),colW-2*pad));
+          const rowH=Math.max(1,...cellLines.map(l=>l.length))*tlead+2*pad;
+          if(y-rowH<M)newPage();
+          cellLines.forEach((lines,ci)=>{const x=M+ci*colW;
+            page.drawRectangle({x,y:y-rowH,width:colW,height:rowH,borderWidth:0.5,borderColor:rgb(0.7,0.7,0.7)});
+            lines.forEach((line,k)=>drawWords(line,x+pad,y-pad-tsize-k*tlead,rgb(0,0,0)));});
+          y-=rowH;});
+        y-=lead*0.5;continue;}
+      let indent=0,prefix="";
+      if(b.type==="li"){indent=18*(lvl+1);prefix=BULLET+"  ";}
+      if(b.type==="ol"){indent=18*(lvl+1);prefix=counters[lvl]+".  ";}
+      if(b.type==="quote")indent=24;
+      const runs=b.type==="code"?[{text:runsText(b.runs),code:true}]:b.runs;
+      const words=tokenize(runs,size,/^h[1-3]$/.test(b.type));
+      if(prefix)words.unshift({text:prefix,font:F.r,size});
+      const lines=layout(words,maxW-indent);
       if(/^h[1-3]$/.test(b.type))y-=size*0.5;
       const color=b.type==="quote"?rgb(0.35,0.35,0.35):rgb(0,0,0);
-      lines.forEach(line=>{
-        if(y-lead<M)newPage();
-        let x=x0;
-        line.forEach(w=>{page.drawText(w.text,{x,y:y-size,size:w.size,font:w.font,color});x+=w.font.widthOfTextAtSize(w.text,w.size);});
-        y-=lead;});
+      lines.forEach(line=>{if(y-lead<M)newPage();drawWords(line,M+indent,y-size,color);y-=lead;});
       y-=lead*0.5;
-    });
+    }
     onP(0.9,"saving");
     const bytes=await pdf.save();
     return new Blob([bytes],{type:"application/pdf"});

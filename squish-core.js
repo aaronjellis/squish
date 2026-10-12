@@ -444,41 +444,57 @@
     return String(text).replace(/\r\n?/g,"\n").split(/\n[ \t]*\n+/).map(p=>p.trim()).filter(Boolean)
       .map(p=>({type:"p",runs:[{text:p.replace(/\s*\n\s*/g," ")}]}));
   }
+  function cellText(cell){return runsText(cell).replace(/\s*\n\s*/g," ");}
   function blocksToTxt(blocks){
-    let n=0;
-    return blocks.map(b=>{const t=runsText(b.runs);
-      if(b.type==="ol"){n++;return n+". "+t;}
-      n=0;
-      if(b.type==="li")return "- "+t;
-      if(b.type==="hr")return "----------";
-      if(b.type==="quote")return "> "+t;
-      return t;
-    }).join("\n\n")+"\n";
+    let counters=[],out="";
+    const isItem=b=>b&&(b.type==="li"||b.type==="ol");
+    blocks.forEach((b,i)=>{
+      let line;
+      if(b.type==="table"){line=b.rows.map(r=>r.map(cellText).join("\t")).join("\n");counters=[];}
+      else{
+        const t=runsText(b.runs),lvl=b.level||0;
+        if(b.type==="ol"){counters=counters.slice(0,lvl+1);counters[lvl]=(counters[lvl]||0)+1;line="  ".repeat(lvl)+counters[lvl]+". "+t;}
+        else if(b.type==="li")line="  ".repeat(lvl)+"- "+t;
+        else{counters=[];line=b.type==="hr"?"----------":b.type==="quote"?"> "+t:t;}
+      }
+      const prev=blocks[i-1];
+      const tight=isItem(prev)&&isItem(b)&&!((prev.level||0)===0&&(b.level||0)===0&&prev.type!==b.type);
+      out+=(i?(tight?"\n":"\n\n"):"")+line;
+    });
+    return out+"\n";
   }
   function mdRun(r){
     let t=r.text||"";if(!t)return "";
     if(r.code)return "`"+t.replace(/`/g,"\\`")+"`";
     t=t.replace(/([*_\\\[\]])/g,"\\$1");
-    if(r.b)t="**"+t+"**";if(r.i)t="*"+t+"*";
+    if(r.b)t="**"+t+"**";if(r.i)t="*"+t+"*";if(r.u)t="<u>"+t+"</u>";
     const href=safeHref(r.href);
     if(href)t="["+t+"]("+(/[\s()<>]/.test(href)?"<"+href.replace(/[<>]/g,encodeURIComponent)+">":href)+")";
     return t;
   }
+  function mdCell(cell){return cell.map(mdRun).join("").replace(/\|/g,"\\|").replace(/\s*\n\s*/g," ");}
   function blocksToMd(blocks){
-    let n=0,out="";
+    let counters=[],out="";
+    const isItem=b=>b&&(b.type==="li"||b.type==="ol");
     blocks.forEach((b,i)=>{
-      const t=b.runs.map(mdRun).join("");
-      if(b.type==="ol")n++;else n=0;
       let line;
-      switch(b.type){
-        case "h1":line="# "+t;break;case "h2":line="## "+t;break;case "h3":line="### "+t;break;
-        case "li":line="- "+t;break;case "ol":line=n+". "+t;break;
-        case "code":line="```\n"+runsText(b.runs)+"\n```";break;
-        case "quote":line="> "+t;break;case "hr":line="---";break;
-        default:line=t.replace(/^(\s*)(#|>|[-+*](?=\s)|\d+(?=[.)]\s))/,(m,sp,mk)=>sp+(/^\d/.test(mk)?mk:"\\"+mk)).replace(/^(\s*\d+)([.)])(?=\s)/,"$1\\$2");
+      if(b.type==="table"){
+        const rows=b.rows.map(r=>"| "+r.map(mdCell).join(" | ")+" |");
+        const cols=(b.rows[0]||[]).length;rows.splice(1,0,"| "+Array(cols).fill("---").join(" | ")+" |");
+        line=rows.join("\n");counters=[];
+      }else{
+        const t=b.runs.map(mdRun).join(""),lvl=b.level||0;
+        if(b.type==="ol"){counters=counters.slice(0,lvl+1);counters[lvl]=(counters[lvl]||0)+1;}else if(b.type!=="li")counters=[];
+        switch(b.type){
+          case "h1":line="# "+t;break;case "h2":line="## "+t;break;case "h3":line="### "+t;break;
+          case "li":line="  ".repeat(lvl)+"- "+t;break;case "ol":line="   ".repeat(lvl)+counters[lvl]+". "+t;break;
+          case "code":line="```\n"+runsText(b.runs)+"\n```";break;
+          case "quote":line="> "+t;break;case "hr":line="---";break;
+          default:line=t.replace(/^(\s*)(#|>|[-+*](?=\s)|\d+(?=[.)]\s))/,(mm,sp,mk)=>sp+(/^\d/.test(mk)?mk:"\\"+mk)).replace(/^(\s*\d+)([.)])(?=\s)/,"$1\\$2");
+        }
       }
       const prev=blocks[i-1];
-      const tight=prev&&prev.type===b.type&&(b.type==="li"||b.type==="ol");
+      const tight=isItem(prev)&&isItem(b)&&!((prev.level||0)===0&&(b.level||0)===0&&prev.type!==b.type);
       out+=(i?(tight?"\n":"\n\n"):"")+line;
     });
     return out+"\n";
@@ -492,22 +508,35 @@
     return t;
   }
   function htmlBody(blocks,xhtml){
-    const body=[];let list=null;const hr=xhtml?"<hr/>":"<hr>";
-    const closeList=()=>{if(list){body.push(list==="li"?"</ul>":"</ol>");list=null;}};
+    const body=[],stack=[];const hr=xhtml?"<hr/>":"<hr>";
+    const closeLi=top=>{if(!top.liOpen)return;if(top.liIndex===body.length-1)body[body.length-1]+="</li>";else body.push("</li>");top.liOpen=false;};
+    const closeTop=()=>{const top=stack.pop();closeLi(top);body.push(top.type==="li"?"</ul>":"</ol>");};
+    const closeAll=()=>{while(stack.length)closeTop();};
+    const item=(T,L,t)=>{
+      while(stack.length&&stack[stack.length-1].level>L)closeTop();
+      if(stack.length&&stack[stack.length-1].level===L&&stack[stack.length-1].type!==T)closeTop();
+      if(!stack.length||stack[stack.length-1].level<L){const lvl=stack.length?stack[stack.length-1].level+1:0;body.push(T==="li"?"<ul>":"<ol>");stack.push({type:T,level:lvl,liOpen:false,liIndex:-1});}
+      else closeLi(stack[stack.length-1]);
+      body.push("<li>"+t);const top=stack[stack.length-1];top.liOpen=true;top.liIndex=body.length-1;
+    };
     blocks.forEach(b=>{
-      const t=(b.runs||[]).map(r=>htmlRun(r,xhtml)).join("");
-      if(b.type==="li"||b.type==="ol"){
-        if(list!==b.type){closeList();body.push(b.type==="li"?"<ul>":"<ol>");list=b.type;}
-        body.push("<li>"+t+"</li>");return;
+      if(b.type==="li"||b.type==="ol"){item(b.type,b.level||0,b.runs.map(r=>htmlRun(r,xhtml)).join(""));return;}
+      closeAll();
+      if(b.type==="table"){
+        const row=(r,tag)=>"<tr>"+r.map(c=>"<"+tag+">"+c.map(x=>htmlRun(x,xhtml)).join("")+"</"+tag+">").join("")+"</tr>";
+        const rows=b.rows||[];body.push("<table>");
+        if(b.header&&rows.length){body.push("<thead>",row(rows[0],"th"),"</thead>","<tbody>",...rows.slice(1).map(r=>row(r,"td")),"</tbody>");}
+        else body.push("<tbody>",...rows.map(r=>row(r,"td")),"</tbody>");
+        body.push("</table>");return;
       }
-      closeList();
+      const t=(b.runs||[]).map(r=>htmlRun(r,xhtml)).join("");
       if(b.type==="code")body.push("<pre><code>"+escapeHtml(runsText(b.runs))+"</code></pre>");
       else if(b.type==="quote")body.push("<blockquote><p>"+t+"</p></blockquote>");
       else if(b.type==="hr")body.push(hr);
       else if(/^h[1-3]$/.test(b.type))body.push("<"+b.type+">"+t+"</"+b.type+">");
       else body.push("<p>"+t+"</p>");
     });
-    closeList();
+    closeAll();
     return body.join("\n");
   }
   const DOC_CSS="body{max-width:720px;margin:40px auto;padding:0 20px;font-family:system-ui,sans-serif;line-height:1.55}pre{background:#f4f4f4;padding:12px;overflow:auto}blockquote{border-left:3px solid #ccc;margin:0;padding-left:14px;color:#555}";
@@ -549,12 +578,12 @@
     const src=String(rtf),blocks=[];
     const SKIP=new Set(["fonttbl","colortbl","stylesheet","info","pict","object","header","footer","footnote",
       "listtable","listoverridetable","themedata","colorschememapping","latentstyles","datastore","xmlnstbl","generator"]);
-    let runs=[],cur="",state={b:false,i:false,uc:1},stack=[],depth=0,skipDepth=0,i=0;
-    const flushRun=()=>{if(cur){runs.push({text:cur,b:state.b,i:state.i});cur="";}};
+    let runs=[],cur="",state={b:false,i:false,u:false,uc:1},stack=[],depth=0,skipDepth=0,i=0;
+    const flushRun=()=>{if(cur){const r={text:cur,b:state.b,i:state.i};if(state.u)r.u=true;runs.push(r);cur="";}};
     const flushPara=()=>{flushRun();if(runs.some(r=>r.text.trim()))blocks.push({type:"p",runs});runs=[];};
     while(i<src.length){
       const ch=src[i];
-      if(ch==="{"){depth++;i++;if(!skipDepth){flushRun();stack.push({b:state.b,i:state.i,uc:state.uc});if(src.startsWith("\\*",i))skipDepth=depth;}continue;}
+      if(ch==="{"){depth++;i++;if(!skipDepth){flushRun();stack.push({b:state.b,i:state.i,u:state.u,uc:state.uc});if(src.startsWith("\\*",i))skipDepth=depth;}continue;}
       if(ch==="}"){if(skipDepth===depth){skipDepth=0;stack.pop();}else if(!skipDepth){flushRun();state=stack.pop()||state;}depth--;i++;continue;}
       if(ch==="\\"){
         const m=/^\\([a-zA-Z]+)(-?\d+)? ?|^\\'([0-9a-fA-F]{2})|^\\([\s\S])/.exec(src.slice(i,i+40));
@@ -570,6 +599,8 @@
         else if(w==="tab")cur+="\t";
         else if(w==="b"){flushRun();state.b=n!=="0";}
         else if(w==="i"){flushRun();state.i=n!=="0";}
+        else if(w==="ul"){flushRun();state.u=n!=="0";}
+        else if(w==="ulnone"){flushRun();state.u=false;}
         else if(w==="uc"){state.uc=Math.max(0,parseInt(n,10)||0);}
         else if(w==="u"){let code=parseInt(n,10);if(code<0)code+=65536;cur+=String.fromCharCode(code);
           // skip the fallback characters that follow (\'xx counts as one)

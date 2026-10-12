@@ -451,6 +451,20 @@ ok("chapter is XHTML: namespace, self-closing hr and br, escaped text", /xmlns="
 ok("the zip starts with the stored mimetype at offset 38", (z=>new TextDecoder().decode(z.subarray(38,58)))(C.zipStore(ep))==="application/epub+zip");
 ok("docs converter offers epub", C.findConverter("md","epub")?.engine==="docs");
 
+/* ---------- 22. Block model v2: nested lists, underline, tables ---------- */
+section("Block model v2");
+const nested=[{type:"li",runs:[{text:"a"}]},{type:"li",level:1,runs:[{text:"b"}]},{type:"li",runs:[{text:"c"}]},{type:"ol",runs:[{text:"one"}]},{type:"ol",level:1,runs:[{text:"two"}]}];
+eq("md indents nested items", C.blocksToMd(nested), "- a\n  - b\n- c\n\n1. one\n   1. two\n");
+ok("html nests the lists", (h=>h.includes("<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul>\n</li>\n<li>c</li>\n</ul>"))(C.blocksToHtml(nested,"t")));
+ok("txt indents nested items", C.blocksToTxt(nested).includes("- a\n  - b\n- c"));
+const tbl=[{type:"table",header:true,rows:[[[{text:"Name"}],[{text:"Age"}]],[[{text:"Ann"}],[{text:"34"}]],[[{text:"B|o"}],[{text:""}]]]}];
+eq("md pipe table", C.blocksToMd(tbl), "| Name | Age |\n| --- | --- |\n| Ann | 34 |\n| B\\|o |  |\n");
+ok("html table with thead", (h=>h.includes("<table>\n<thead>\n<tr><th>Name</th><th>Age</th></tr>\n</thead>\n<tbody>\n<tr><td>Ann</td><td>34</td></tr>"))(C.blocksToHtml(tbl,"t")));
+ok("txt table uses tabs", C.blocksToTxt(tbl).includes("Name\tAge\nAnn\t34"));
+ok("underline survives in html and md", C.blocksToHtml([{type:"p",runs:[{text:"u",u:true}]}],"t").includes("<u>u</u>")&&C.blocksToMd([{type:"p",runs:[{text:"u",u:true}]}]).includes("<u>u</u>"));
+ok("rtf \\ul and \\ulnone toggle underline", (r=>r[0].runs.map(x=>!!x.u).join(","))(C.rtfToBlocks(String.raw`{\rtf1 \ul on\ulnone  off}`))==="true,false");
+ok("xhtml table and nested list are well formed", (x=>x.includes("<table>")&&x.includes("<ul>\n<li>a\n<ul>"))(C.blocksToXhtml([...nested,...tbl],"t")));
+
 /* ---------- summary ---------- */
 function finish(){
   console.log("\n────────────────────────────");
