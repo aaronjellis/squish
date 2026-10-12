@@ -95,3 +95,20 @@ test("app: md to epub",async({page})=>{
   const r=await convert(page,"short.md","epub");
   expect(r.title).toBe("ta-da!");expect(r.sub).toContain("EPUB");
 });
+
+test("app: voting opens a styled requested-formats panel, not an alert",async({page})=>{
+  let alerts=0;page.on("dialog",d=>{alerts++;d.dismiss();});
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("shapes.svg"));
+  const input=page.locator("#targetInput");await input.fill(".dwg");await input.press("Enter");
+  await page.locator("#vbtn").click();
+  await expect(page.locator("#vbtn")).toContainText("thanks");
+  await page.locator("#showStats").click();
+  const dlg=page.locator("#statsDlg");
+  await expect(dlg).toBeVisible();
+  await expect(dlg).toContainText("svg");
+  await expect(dlg).toContainText("dwg");
+  await page.keyboard.press("Escape");
+  await expect(dlg).toBeHidden();
+  expect(alerts).toBe(0);
+});

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-vote-endpoint="">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -201,7 +201,21 @@
 
   .hidden{display:none !important}
   .footer{font-size:12px;color:var(--ink-faint);padding:22px;text-align:center;font-weight:600}
-  .statlink{color:var(--ink-dim);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .statlink{all:unset;color:var(--ink-dim);cursor:pointer;text-decoration:underline;text-underline-offset:3px;font:inherit}
+  .statlink:focus-visible{outline:2px solid var(--pink);outline-offset:3px;border-radius:6px}
+  dialog.statsDlg{border:0;padding:0;background:transparent;max-width:min(92vw,520px);width:100%;color:var(--ink);overflow:visible}
+  dialog.statsDlg::backdrop{background:rgba(12,9,20,.6);backdrop-filter:blur(4px)}
+  .statsBox{box-sizing:border-box;width:100%;max-height:85vh;overflow:auto;border-radius:22px;padding:24px 26px 20px;font-size:14px;line-height:1.5}
+  .statsBox h3{margin:0 0 4px;font-size:20px;font-weight:800}
+  .statsBox .sub{color:var(--ink-dim);font-size:13px;margin-bottom:16px}
+  .statsBox h4{margin:18px 0 8px;font-size:12px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--teal)}
+  .statsBox ul{list-style:none;margin:0;padding:0}
+  .statsBox li{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.04);margin-bottom:6px}
+  .statsBox li .pair{font-weight:800}
+  .statsBox li .count{margin-left:auto;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  .statsBox li .mine{font-size:11px;color:var(--pink);font-weight:700}
+  .statsBox .empty{color:var(--ink-faint);padding:6px 2px}
+  .statsBox .close{margin-top:18px;width:100%;box-sizing:border-box;text-align:center}
 </style>
 </head>
 <body>
@@ -293,7 +307,18 @@
     </div>
   </main>
 
-  <div class="footer">Squish · 100% local · <span class="statlink" id="showStats">view requested formats</span></div>
+  <div class="footer">Squish · 100% local · <button type="button" class="statlink" id="showStats">view requested formats</button></div>
+  <dialog class="statsDlg" id="statsDlg" aria-labelledby="statsTitle">
+    <div class="statsBox clay">
+      <h3 id="statsTitle">Requested formats</h3>
+      <div class="sub" id="statsSub"></div>
+      <h4>Votes</h4>
+      <ul id="statsReq"></ul>
+      <h4>Most dropped file types</h4>
+      <ul id="statsDrop"></ul>
+      <button type="button" class="rbtn close" id="statsClose">Close</button>
+    </div>
+  </dialog>
 </div>
 
 <div class="converting" id="converting">
@@ -621,14 +646,33 @@ function stopHelix(){if(helixRAF)cancelAnimationFrame(helixRAF);}
 
 /* ---------- analytics + voting ---------- */
 function logEvent(name){try{const k="squish_stats",s=JSON.parse(localStorage.getItem(k)||"{}");s[name]=(s[name]||0)+1;localStorage.setItem(k,JSON.stringify(s));}catch(e){}}
+const VOTE_ENDPOINT=(document.documentElement.dataset.voteEndpoint||"").trim();
 function addVote(pair,from,to){
-  // Local tally only. It powers the in-app "view requested formats" list and never leaves the device.
+  // Local tally always. When the host sets data-vote-endpoint on <html>, the pair is posted too.
+  // Only the two format names leave the device, never the file.
   try{const k="squish_requests",r=JSON.parse(localStorage.getItem(k)||"{}");r[pair]=(r[pair]||0)+1;localStorage.setItem(k,JSON.stringify(r));}catch(e){}
+  if(VOTE_ENDPOINT){fetch(VOTE_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({from,to,page:location.pathname})}).catch(()=>{});}
 }
-$("#showStats").addEventListener("click",()=>{const req=JSON.parse(localStorage.getItem("squish_requests")||"{}"),stat=JSON.parse(localStorage.getItem("squish_stats")||"{}");
-  const r=Object.entries(req).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`  ${k}  ×${v}`).join("\n")||"  (none yet)";
-  const p=Object.entries(stat).filter(([k])=>k.startsWith("input_")).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`  ${k.replace("input_",".")}  ×${v}`).join("\n")||"  (none yet)";
-  alert("REQUESTED (unbuilt) FORMATS, stored only in this browser:\n"+r+"\n\nMOST-DROPPED FILE TYPES:\n"+p);});
+async function fetchVoteTotals(){
+  if(!VOTE_ENDPOINT)return null;
+  try{const r=await fetch(VOTE_ENDPOINT,{headers:{accept:"application/json"}});if(!r.ok)return null;const j=await r.json();return Array.isArray(j.votes)?j.votes:null;}catch(e){return null;}
+}
+async function openStats(){
+  const dlg=$("#statsDlg");if(!dlg.open)dlg.showModal();
+  const read=k=>{try{return JSON.parse(localStorage.getItem(k)||"{}");}catch(e){return {};}};
+  const server=await fetchVoteTotals();
+  const sum=SquishCore.summarizeVotes(read("squish_requests"),read("squish_stats"),server);
+  const ARROW=String.fromCharCode(0x2192);
+  $("#statsSub").textContent=server?"Everyone's votes, plus yours from this browser.":"Counted in this browser only. Nothing is sent anywhere.";
+  const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  $("#statsReq").innerHTML=sum.requested.length?sum.requested.map(r=>`<li><span class="pair">.${esc(r.from)} ${ARROW} .${esc(r.to)}</span>${r.mine&&server?`<span class="mine">you: ${r.mine}</span>`:""}<span class="count">${r.count} vote${r.count===1?"":"s"}</span></li>`).join("")
+    :`<li class="empty">No requests yet. Pick a format Squish doesn't make and vote for it.</li>`;
+  $("#statsDrop").innerHTML=sum.dropped.length?sum.dropped.map(d=>`<li><span class="pair">.${esc(d.ext)}</span><span class="count">${d.count}</span></li>`).join("")
+    :`<li class="empty">Nothing dropped yet.</li>`;
+}
+$("#showStats").addEventListener("click",openStats);
+$("#statsClose").addEventListener("click",()=>$("#statsDlg").close());
+$("#statsDlg").addEventListener("click",e=>{if(e.target===e.currentTarget)e.currentTarget.close();});
 
 /* ---------- reset ---------- */
 $("#thumbX").addEventListener("click",e=>{e.stopPropagation();resetAll();});
