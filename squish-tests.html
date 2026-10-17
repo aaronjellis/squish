@@ -270,6 +270,17 @@ async function run(){
     ok("a truncated JXL codestream fails with a plain message", t.err && /couldn't read this JPEG XL/.test(t.err.message), String(t.err?.message));
     let gerr=null;try{await C.canvasToJxl({width:5000,height:4000,getContext(){throw new Error("read pixels before the size check");}},{},noP);}catch(e){gerr=e;}
     ok("a 20 megapixel image is refused before encoding", gerr && /20 megapixels/.test(gerr.message), String(gerr?.message));
+    { // Cancel mid-encode: a 3 megapixel noisy PNG takes the worker well over 100 ms, so an abort after the encoding label lands while it is busy.
+      const big=document.createElement("canvas");big.width=2048;big.height=1536;const g=big.getContext("2d");
+      const im=g.createImageData(big.width,big.height);let seed=7;for(let i=0;i<im.data.length;i++){seed=(seed*1103515245+12345)>>>0;im.data[i]=(i&3)===3?255:seed>>>24;}
+      g.putImageData(im,0,0);
+      const bigPng=new File([await new Promise(r=>big.toBlob(r,"image/png"))],"noise.png",{type:"image/png"});
+      const ac=new AbortController();t={err:null,labels:[]};
+      try{await C.ENGINES.raster(bigPng,{quality:"85",lossless:false,resize:"1",signal:ac.signal},(f,l)=>{if(l)t.labels.push(l);if(l&&/encoding JPEG XL/.test(l))setTimeout(()=>ac.abort(),100);},"jxl");}catch(e){t.err=e;}
+      ok("cancelling a png → jxl encode rejects with a cancelled error", !!(t.err&&t.err.cancelled), t.err?String(t.err.message):"finished before the abort");
+      t = await tryEngine("raster",pngFx,{quality:"85",lossless:true,resize:"1"},"jxl");
+      ok("the next jxl encode after a cancel succeeds on a fresh worker", t.r?.type==="image/jxl" && t.r.size>0, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
+    }
   }
   group("Meshes");
   t = await tryEngine("mesh",await fx("cube.3mf","model/3mf"),{},"stl");
