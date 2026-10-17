@@ -14,10 +14,10 @@ converter has a real engine, and every format in the picker is used by one.
 
 | Engine | Conversions | Implementation |
 | --- | --- | --- |
-| `raster` | png/jpg/webp/bmp/gif/avif/ico to png/jpg/webp/ico | canvas plus an in-house ICO writer, in core |
-| `svgRaster` | svg to png/jpg/webp | canvas, in core |
+| `raster` | png/jpg/webp/bmp/gif/avif/ico to png/jpg/webp/ico/jxl | canvas plus an in-house ICO writer, in core; jxl output through `canvasToJxl` in engines |
+| `svgRaster` | svg to png/jpg/webp/jxl | canvas, in core |
 | `svgDxf` | svg to dxf | geometry in core (`shapesToDxf`: paths, lines, rects, circles, ellipses, polygons, arcs, transforms); DOM walk in engines |
-| `imageDecode` | heic/heif/tiff/tif/psd to png/jpg/webp | libheif-js, UTIF, ag-psd in engines |
+| `imageDecode` | heic/heif/tiff/tif/psd/jxl to png/jpg/webp/jxl | libheif-js, UTIF, ag-psd, jSquash JXL (libjxl wasm) in engines; jxl tries the browser's native decoder first |
 | `data` | csv to json, json to csv | in core |
 | `mesh` | stl/obj/3mf to stl/obj/3mf | in core (binary STL, OBJ, 3MF with a zip reader that inflates) |
 | `pdfPptx` | pdf to pptx | pdf.js pages as picture slides via pptxgenjs |
@@ -39,11 +39,11 @@ it). `onProgress` labels show up under the progress bar.
 | `squish.html` | The app. Styles plus UI script inline; loads `squish-core.js` then `squish-engines.js` with plain `<script src>` tags. |
 | `squish-core.js` | Format library, converter registry, option schemas, the three canvas/DXF engines, and every pure helper the heavy engines need (page ranges, zip writer, block model, RTF reader, PDF text grouping, ffmpeg argument builder). UMD-ish IIFE: sets `globalThis.SquishCore` and `module.exports`. No DOM access at load time so Node can `require` it. |
 | `squish-engines.js` | Browser only. Lazy-imports the vendored libraries and replaces the four placeholder engines on `SquishCore.ENGINES`. Also holds `blocksFromHtml` (DOMParser), the docx writer, and the pdf writer. |
-| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
+| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, and the @jsquash/jxl codec builds. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
 | `scripts/serve.cjs` | Dependency-free static server (`npm run serve`, port 8788) with correct MIME types for `.mjs` and `.wasm`. |
 | `scripts/vendor.sh` | Downloads the pinned libraries from unpkg. |
-| `scripts/make-fixtures.cjs` | Regenerates `fixtures/` (two-page PDF, 1 s wav and mp4, md, html, rtf, txt). |
-| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 166 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
+| `scripts/make-fixtures.cjs` | Regenerates `fixtures/` (two-page PDF, 1 s wav and mp4, md, html, rtf, txt, the 48 by 32 test image as png, heic, tiff, psd, and a lossless jxl). |
+| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 289 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
 | `scripts/serve.test.cjs` | Checks the dev server refuses paths outside the repo. Runs as part of `npm test`. |
 | `squish-tests.html` | Browser runner that does real conversions through every engine. Add `?ffmpeg=1` to include the ffmpeg group (downloads the 31 MB core). |
 | `tests/e2e/conversions.spec.js` | Playwright (`npm run test:e2e`): asserts the browser runner is green and drives `squish.html` for pdf, md, wav, and two failure cases. |
@@ -91,10 +91,32 @@ Gotchas learned the hard way:
 - Node's small-ICU `TextDecoder` leaves Windows-1252 bytes 0x80 to 0x9F as
   control characters; `decodeText` maps them by hand (`CP1252`).
 - libheif-js's default export is an async factory; call it once and cache.
+- The jSquash JXL glue files are Emscripten factories that locate their
+  `.wasm` with `import.meta.url`, so they work with a plain `import()` and
+  no bundler. Pass `wasmBinary` to run them in Node (the fixture script does).
+- The jSquash encoder is synchronous and blocks the main thread. Effort 4 is
+  the compromise; 7 (the library default) takes several times longer.
 - The harness that drives these sessions turns typed `\\uXXXX` into the
   character. Build such escapes with `String.fromCharCode` instead.
 
 ### Engine by engine
+
+**jxl (JPEG XL in and out).** Reading: `decodeToCanvas` checks the signature
+(`isJxl` in core: bare codestream `FF 0A` or the ISOBMFF container), tries
+`createImageBitmap` so browsers with native JPEG XL (Safari 17, Chrome 155,
+recent Firefox) skip the download, and otherwise loads the jSquash decoder
+(850 KB wasm, 315 KB gzipped) through `jxlDecode`. Writing: the raster,
+svgRaster, and imageDecode engines hand their canvas to `canvasToJxl` in
+engines, which refuses anything over `JXL_MAX_PIXELS` (16 megapixels,
+`jxlSizeError`), loads the single-thread jSquash encoder (1.4 MB wasm, 514 KB
+gzipped), and encodes with `jxlEncodeOptions` from core: effort 4, the quality
+slider, or lossless modular mode when the **Lossless** checkbox is on. The
+multi-thread encoder builds are not vendored because they need
+SharedArrayBuffer and cross-origin isolation headers. Options can carry
+`targets: ["jxl"]`; `optionsFor(conv, to)` filters them and the UI only
+renders the matches. The `check` option type (a styled checkbox) and
+`disables: ["quality"]` (dims the named option while checked) were added for
+this.
 
 **pdfRaster (pdf to png/jpg).** pdf.js renders each page to a canvas at
 `dpi/72`, honoring the `pages` option (`parsePageRange`, ranges like

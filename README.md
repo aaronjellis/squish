@@ -18,9 +18,9 @@ library-backed engines need an http origin because they load modules from
 
 | From | To | Engine |
 | --- | --- | --- |
-| png, jpg, webp, bmp, gif, avif, ico | png, jpg, webp, ico | canvas |
-| heic, tiff, psd | png, jpg, webp | libheif, UTIF, ag-psd |
-| svg | png, jpg, webp | canvas |
+| png, jpg, webp, bmp, gif, avif, ico | png, jpg, webp, ico, jxl | canvas; libjxl (wasm) for jxl |
+| heic, tiff, psd, jxl | png, jpg, webp, jxl | libheif, UTIF, ag-psd, libjxl (wasm) |
+| svg | png, jpg, webp, jxl | canvas; libjxl (wasm) for jxl |
 | svg | dxf | in-house emitter (true splines, shapes, arcs, transforms) |
 | pdf | png, jpg | pdf.js |
 | pdf | docx | pdf.js text layer plus docx |
@@ -58,6 +58,8 @@ totals from it. Every conversion has a Cancel button.
 ## Known limits
 
 - AVIF can be read but not written. Browsers don't expose an AVIF encoder.
+- JPEG XL output is capped at 16 megapixels, the most the wasm encoder
+  handles in a browser tab. Resize larger images first.
 - PDF to Word and PDF to PowerPoint need real, selectable text. Squish does
   not do OCR. Slides are pictures of the pages, not editable text.
 - Characters no bundled font covers (emoji, CJK) are pictures in PDF
