@@ -25,6 +25,8 @@
     utif:{url:"vendor/utif/UTIF.js",kind:"script",global:"UTIF",label:"the TIFF decoder"},
     agpsd:{url:"vendor/ag-psd/bundle.js",kind:"script",global:"agPsd",label:"the Photoshop reader"},
     pptx:{url:"vendor/pptxgenjs/pptxgen.bundle.js",kind:"script",global:"PptxGenJS",label:"the PowerPoint writer"},
+    jxldec:{url:"vendor/jsquash-jxl/codec/dec/jxl_dec.js",label:"the JPEG XL decoder (300 KB, first time only)"},
+    jxlenc:{url:"vendor/jsquash-jxl/codec/enc/jxl_enc.js",label:"the JPEG XL encoder (500 KB, first time only)"},
   };
   const loaded={};
   // UMD builds: inject a script tag and hand back the global it defines.
@@ -63,9 +65,42 @@
   /* ---------- HEIC, TIFF, PSD -> canvas ---------- */
   function canvasFromRgba(rgba,w,h){const c=document.createElement("canvas");c.width=w;c.height=h;
     c.getContext("2d").putImageData(new ImageData(rgba instanceof Uint8ClampedArray?rgba:new Uint8ClampedArray(rgba.buffer||rgba),w,h),0,0);return c;}
+  /* ---------- JPEG XL (jSquash builds of libjxl; single-thread encoder, no SharedArrayBuffer needed) ---------- */
+  let jxlDecReady=null,jxlEncReady=null;
+  const JXL_BAD="Squish couldn't read this JPEG XL file. It may be damaged or not an image.";
+  // The Emscripten glue exports a factory; each codec is instantiated once per page.
+  async function jxlDecode(buf,onP){
+    const mod=await loadLib("jxldec",onP);if(!jxlDecReady)jxlDecReady=mod.default({noInitialRun:true});
+    const m=await jxlDecReady;let img=null;try{img=m.decode(buf);}catch(e){img=null;}
+    if(!img||!img.width)throw new Error(JXL_BAD);return img;
+  }
+  // Browsers that decode JPEG XL natively (Safari 17, Chrome 155, recent Firefox) skip the wasm download.
+  async function jxlNativeCanvas(buf){
+    if(typeof createImageBitmap!=="function")return null;
+    try{const bmp=await createImageBitmap(new Blob([buf],{type:"image/jxl"}));
+      const c=document.createElement("canvas");c.width=bmp.width;c.height=bmp.height;c.getContext("2d").drawImage(bmp,0,0);if(bmp.close)bmp.close();return c;}
+    catch(e){return null;}
+  }
+  async function canvasToJxl(c,opts,onP){
+    const tooBig=C.jxlSizeError(c.width,c.height);if(tooBig)throw new Error(tooBig);
+    const mod=await loadLib("jxlenc",onP);if(!jxlEncReady)jxlEncReady=mod.default({noInitialRun:true});
+    const m=await jxlEncReady;throwIfAborted(opts&&opts.signal);
+    const data=c.getContext("2d").getImageData(0,0,c.width,c.height);
+    if(onP)onP(0.75,"encoding JPEG XL on your device");
+    await new Promise(r=>setTimeout(r,30)); // the encoder is synchronous, so let the label paint first
+    let out=null;try{out=m.encode(data.data,c.width,c.height,C.jxlEncodeOptions(opts));}catch(e){out=null;}
+    if(!out||!out.byteLength)throw new Error("Squish couldn't encode this image as JPEG XL. Try the Resize option if it is very large.");
+    return new Blob([new Uint8Array(out.buffer,out.byteOffset,out.byteLength)],{type:"image/jxl"});
+  }
+
   let libheifReady=null;
   async function decodeToCanvas(file,from,onP){
     const buf=await file.arrayBuffer();
+    if(from==="jxl"){
+      if(!C.isJxl(new Uint8Array(buf)))throw new Error(JXL_BAD);
+      const native=await jxlNativeCanvas(buf);if(native)return native;
+      const img=await jxlDecode(buf,onP);return canvasFromRgba(img.data,img.width,img.height);
+    }
     if(from==="heic"){
       const mod=await loadLib("heif",onP);
       if(!libheifReady)libheifReady=mod.default();
@@ -102,6 +137,7 @@
     c.width=Math.max(1,Math.round(src.width*scale));c.height=Math.max(1,Math.round(src.height*scale));
     const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
     ctx.drawImage(src,0,0,c.width,c.height);
+    if(toExt==="jxl")return canvasToJxl(c,opts,onP);
     return canvasBlob(c,mimeFor(toExt),(parseInt(opts.quality||85,10))/100);
   }
 
@@ -471,5 +507,5 @@
   }
 
   Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,pdfPptx,ffmpeg,imageDecode});
-  C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;
+  C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;C.canvasToJxl=canvasToJxl;C.jxlDecode=jxlDecode;
 })();

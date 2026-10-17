@@ -234,6 +234,43 @@ async function run(){
   ok("heic → jpg honors resize and type", t.r?.type==="image/jpeg" && dHeic && dHeic.w===24, t.err?String(t.err.message):(dHeic?`${dHeic.w}×${dHeic.h}`:""));
   t = await tryEngine("imageDecode",new File([new Uint8Array([1,2,3,4,5])],"bad.heic",{type:"image/heic"}),{},"png");
   ok("a corrupt HEIC fails with a plain message", t.err && /couldn't/i.test(t.err.message), String(t.err?.message));
+  group("JPEG XL");
+  {
+    const fxPixel=(x,y)=>[(x*5)%256,(y*7)%256,128,255];
+    const expected=new Uint8ClampedArray(48*32*4);for(let y=0;y<32;y++)for(let x=0;x<48;x++)expected.set(fxPixel(x,y),(y*48+x)*4);
+    const same=(img,tol)=>{if(!img||img.width!==48||img.height!==32)return false;for(let i=0;i<expected.length;i++)if(Math.abs(img.data[i]-expected[i])>tol)return false;return true;};
+    const jxlFx=await fx("fx.jxl","image/jxl");
+    let jd=null,jerr=null;try{jd=await C.jxlDecode(await jxlFx.arrayBuffer());}catch(e){jerr=e;}
+    ok("the wasm decoder reads fx.jxl as 48×32 with the exact pattern", same(jd,0), jerr?String(jerr.message):(jd?`${jd.width}×${jd.height}`:""));
+    t = await tryEngine("imageDecode",jxlFx,{quality:"90",resize:"1"},"png");
+    let d = t.r instanceof Blob ? await decode(t.r) : null;
+    ok("jxl → png decodes to 48×32", d && d.w===48 && d.h===32, t.err?String(t.err.message):(d?`${d.w}×${d.h}`:"undecodable"));
+    t = await tryEngine("imageDecode",jxlFx,{quality:"80",resize:"0.5"},"webp");
+    d = t.r instanceof Blob ? await decode(t.r) : null;
+    ok("jxl → webp honors resize and type", t.r?.type==="image/webp" && d && d.w===24, t.err?String(t.err.message):(d?`${d.w}×${d.h}`:""));
+    const pngFx=await fx("fx.png","image/png");
+    t = await tryEngine("raster",pngFx,{quality:"85",lossless:true,resize:"1"},"jxl");
+    let hd = t.r instanceof Blob ? await head(t.r,2) : null;
+    ok("png → jxl (lossless) is a JPEG XL codestream", t.r?.type==="image/jxl" && hd && hd[0]===0xff && hd[1]===0x0a, t.err?String(t.err.message):(hd?[...hd].map(b=>b.toString(16)).join(" "):""));
+    ok("the encoder reports a progress label", t.labels.some(l=>/JPEG XL/.test(l)), t.labels.join(" | "));
+    let back=null;try{back=t.r?await C.jxlDecode(await t.r.arrayBuffer()):null;}catch(e){back=null;}
+    ok("lossless jxl decodes back to the exact pixels", same(back,0), back?`${back.width}×${back.height}`:"undecodable");
+    t = await tryEngine("raster",pngFx,{quality:"60",lossless:false,resize:"1"},"jxl");
+    try{back=t.r?await C.jxlDecode(await t.r.arrayBuffer()):null;}catch(e){back=null;}
+    ok("lossy jxl at 60% decodes close to the pattern", same(back,40), t.err?String(t.err.message):(back?`${back.width}×${back.height}`:"undecodable"));
+    t = await tryEngine("svgRaster",svgFile(),{dpi:"96",quality:"85",bg:"transparent"},"jxl");
+    try{back=t.r?await C.jxlDecode(await t.r.arrayBuffer()):null;}catch(e){back=null;}
+    ok("svg → jxl is 120×80", t.r?.type==="image/jxl" && back && back.width===120 && back.height===80, t.err?String(t.err.message):(back?`${back.width}×${back.height}`:"undecodable"));
+    t = await tryEngine("imageDecode",await fx("fx.heic","image/heic"),{quality:"85",resize:"1"},"jxl");
+    try{back=t.r?await C.jxlDecode(await t.r.arrayBuffer()):null;}catch(e){back=null;}
+    ok("heic → jxl is 48×32", t.r?.type==="image/jxl" && back && back.width===48 && back.height===32, t.err?String(t.err.message):(back?`${back.width}×${back.height}`:"undecodable"));
+    t = await tryEngine("imageDecode",new File([new Uint8Array([1,2,3,4,5])],"bad.jxl",{type:"image/jxl"}),{},"png");
+    ok("a corrupt JXL fails with a plain message", t.err && /couldn't read this JPEG XL/.test(t.err.message), String(t.err?.message));
+    t = await tryEngine("imageDecode",new File([new Uint8Array([0xff,0x0a,1,2,3,4,5,6,7,8])],"truncated.jxl",{type:"image/jxl"}),{},"png");
+    ok("a truncated JXL codestream fails with a plain message", t.err && /couldn't read this JPEG XL/.test(t.err.message), String(t.err?.message));
+    let gerr=null;try{await C.canvasToJxl({width:5000,height:4000,getContext(){throw new Error("read pixels before the size check");}},{},noP);}catch(e){gerr=e;}
+    ok("a 20 megapixel image is refused before encoding", gerr && /20 megapixels/.test(gerr.message), String(gerr?.message));
+  }
   group("Meshes");
   t = await tryEngine("mesh",await fx("cube.3mf","model/3mf"),{},"stl");
   ok("deflated cube.3mf → binary stl of 12 triangles", t.r instanceof Blob && t.r.size===84+50*12, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

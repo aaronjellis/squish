@@ -18,6 +18,7 @@
     jpg:{name:"JPEG photo",cat:"image",desc:"Compressed photo format. Best for photos where small size beats perfect detail."},
     webp:{name:"WebP image",cat:"image",desc:"Modern format with excellent compression. Smaller than PNG/JPEG. Ideal for the web."},
     avif:{name:"AVIF image",cat:"image",desc:"Next-gen image format with the best compression today. Newer, less universal."},
+    jxl:{name:"JPEG XL image",cat:"image",desc:"The newest image format. Smaller than JPEG, lossless when you want it, keeps transparency. Browsers started shipping it in 2026."},
     gif:{name:"GIF",cat:"image",desc:"Short looping animations. Limited colors, perfect for reactions and memes."},
     bmp:{name:"Bitmap",cat:"image",desc:"Uncompressed raw image. Rarely needed today; very large."},
     tiff:{name:"TIFF image",cat:"image",desc:"High-quality lossless image for print and scanning. Large files."},
@@ -67,16 +68,20 @@
   const optQuality={key:"quality",label:"Quality",type:"slider",min:40,max:100,step:1,def:85,unit:"%",hint:"Higher keeps more detail and makes a bigger file."};
   const optResizeAdv={key:"resize",label:"Resize",type:"select",advanced:true,choices:[["1","Keep original size"],["0.5","50% smaller"],["0.25","25%"],["2","2× larger"]],def:"1",hint:"Scaling up can't add detail that isn't in the source."};
   function optDpiSimple(){return {key:"dpi",label:"How sharp?",type:"select",choices:[["96","For screen / sharing"],["150","Good quality"],["300","For printing"]],def:"150",hint:"Sharper looks crisper and makes a bigger file."};}
+  const optLossless={key:"lossless",label:"Lossless",type:"check",def:false,targets:["jxl"],disables:["quality"],hint:"Keeps every pixel exactly. Bigger file, and the quality slider is ignored."};
+  // An option can name the outputs it applies to (targets). Options without targets show for every output.
+  function optionsFor(conv,to){to=norm(to);return ((conv&&conv.options)||[]).filter(o=>!o.targets||o.targets.map(norm).includes(to));}
 
   /* ---------- Converter registry: add an entry, get a feature ---------- */
   const CONVERTERS = [
-    {from:["png","jpg","jpeg","webp","bmp","gif","avif","ico"], to:["png","jpg","webp","ico"], engine:"raster", status:"available",
-     options:[optQuality, optResizeAdv],
+    {from:["png","jpg","jpeg","webp","bmp","gif","avif","ico"], to:["png","jpg","webp","ico","jxl"], engine:"raster", status:"available",
+     options:[optQuality, optLossless, optResizeAdv],
      caveats:["JPEG and WebP are lossy. Below 70% you'll start to see artifacts.",
+              "JPEG XL is new. Older browsers and apps may not open it yet.",
               "Transparency disappears when converting to JPEG (it fills with white).",
               "An ICO holds square copies at 16 to 256 px. Larger images are scaled down."]},
-    {from:["svg"], to:["png","jpg","webp"], engine:"svgRaster", status:"available",
-     options:[optDpiSimple(), optQuality, {key:"bg",label:"Background",type:"seg",advanced:true,
+    {from:["svg"], to:["png","jpg","webp","jxl"], engine:"svgRaster", status:"available",
+     options:[optDpiSimple(), optQuality, optLossless, {key:"bg",label:"Background",type:"seg",advanced:true,
        choices:[["transparent","Transparent"],["white","White"]],def:"transparent",
        hint:"What fills empty areas (a JPEG can't be transparent)."}],
      caveats:["This bakes it into a fixed-size image. It won't scale cleanly anymore."]},
@@ -90,8 +95,8 @@
         hint:"Unit the DXF declares for the imported geometry."},
      ],
      caveats:["Text and embedded images in the SVG aren't exported. Outline your text first."]},
-    {from:["heic","heif","tiff","tif","psd"], to:["png","jpg","webp"], engine:"imageDecode", status:"available",
-     options:[optQuality, optResizeAdv],
+    {from:["heic","heif","tiff","tif","psd","jxl"], to:["png","jpg","webp","jxl"], engine:"imageDecode", status:"available",
+     options:[optQuality, optLossless, optResizeAdv],
      caveats:["Layers, text, and adjustments are flattened to the composite image."]},
     {from:["pdf"], to:["png","jpg"], engine:"pdfRaster", status:"available",
      options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to export every page."}],
@@ -236,8 +241,21 @@
      replaces at load time in the browser. */
   function loadImage(src){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src;});}
   function canvasBlob(c,mime,q){return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error("That image is too large for this browser to draw. Try a smaller size or a lower sharpness setting.")),mime,q));}
-  function mimeFor(ext){return ext==="jpg"?"image/jpeg":ext==="webp"?"image/webp":ext==="ico"?"image/x-icon":"image/png";}
+  function mimeFor(ext){return ext==="jpg"?"image/jpeg":ext==="webp"?"image/webp":ext==="ico"?"image/x-icon":ext==="jxl"?"image/jxl":"image/png";}
   function notLoaded(){return Promise.reject(new Error("squish-engines.js is not loaded, so this converter is unavailable."));}
+
+  /* ---------- JPEG XL (the wasm codec lives in squish-engines.js) ---------- */
+  const JXL_MAX_PIXELS=16e6; // the single-thread wasm encoder runs out of memory somewhere past this
+  const JXL_CONTAINER=[0,0,0,0x0c,0x4a,0x58,0x4c,0x20,0x0d,0x0a,0x87,0x0a];
+  function isJxl(bytes){if(!bytes||bytes.length<2)return false;if(bytes[0]===0xff&&bytes[1]===0x0a)return true;
+    return bytes.length>=JXL_CONTAINER.length&&JXL_CONTAINER.every((b,i)=>bytes[i]===b);}
+  function jxlSizeError(w,h){const px=w*h;if(!(px>JXL_MAX_PIXELS))return null;
+    return "This image is "+Math.round(px/1e6)+" megapixels. The JPEG XL encoder can handle about "+(JXL_MAX_PIXELS/1e6)+" megapixels in a browser. Try the Resize option.";}
+  const optOn=v=>v===true||v==="1"||v==="true"||v==="on";
+  // Maps the UI options to libjxl's encoder settings. Effort 4 keeps the wasm encoder quick; 7 is the library default and slow.
+  function jxlEncodeOptions(opts){const lossless=optOn(opts&&opts.lossless);let q=parseInt(opts&&opts.quality,10);if(!(q>=0))q=85;q=Math.min(100,q);
+    return {effort:4,quality:lossless?100:q,progressive:false,epf:-1,lossyPalette:false,decodingSpeedTier:0,photonNoiseIso:0,lossyModular:false,lossless};}
+  function canvasToJxl(){return notLoaded();} // replaced by squish-engines.js
 
   const ENGINES = {
     async raster(file,opts,onP,toExt){
@@ -255,6 +273,7 @@
       const c=document.createElement("canvas");c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));
       const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
       ctx.drawImage(img,0,0,c.width,c.height);onP(.8);
+      if(toExt==="jxl")return api.canvasToJxl(c,opts,onP);
       return await canvasBlob(c,mimeFor(toExt),(parseInt(opts.quality||85))/100);
     },
     async svgRaster(file,opts,onP,toExt){
@@ -264,6 +283,7 @@
       const c=document.createElement("canvas");c.width=Math.round(w);c.height=Math.round(h);
       const ctx=c.getContext("2d");if(toExt==="jpg"||opts.bg==="white"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
       ctx.drawImage(img,0,0,c.width,c.height);onP(.8);
+      if(toExt==="jxl")return api.canvasToJxl(c,opts,onP);
       return await canvasBlob(c,mimeFor(toExt),(parseInt(opts.quality||90))/100);
     },
     async svgDxf(file,opts,onP){const txt=await file.text();onP(.3);
@@ -881,9 +901,9 @@
   function pdfPageCount(s){const m=s.match(/\/Type\s*\/Page[^s]/g);let n=m?m.length:0;const cm=s.match(/\/Count\s+(\d+)/);if(cm)n=Math.max(n,parseInt(cm[1]));return Math.max(1,n||1);}
 
   /* ---------- exports ---------- */
-  const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,CONVERTERS,IMPOSSIBLE,
+  const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,optLossless,optionsFor,CONVERTERS,IMPOSSIBLE,
     norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,throwIfAborted,summarizeVotes,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
-    ENGINES,loadImage,canvasBlob,mimeFor,
+    ENGINES,loadImage,canvasBlob,mimeFor,isJxl,jxlSizeError,jxlEncodeOptions,canvasToJxl,JXL_MAX_PIXELS,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
     detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};
   root.SquishCore=api;

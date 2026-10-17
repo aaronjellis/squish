@@ -138,6 +138,14 @@
   .opt input[type=text]{font-family:var(--font);font-size:14px;font-weight:700;color:var(--ink);border-radius:12px;padding:13px 16px;
     background:var(--bg2);border:1.5px solid rgba(255,255,255,.14);box-shadow:inset 0 2px 5px rgba(0,0,0,.35);width:100%;outline:none}
   .opt input[type=text]:focus{border-color:var(--blue)}
+  .opt.dim{opacity:.45;pointer-events:none}
+  .optCheck{display:flex;align-items:center;gap:12px;cursor:pointer;width:fit-content;font-size:15px;font-weight:800}
+  .optCheck input{appearance:none;-webkit-appearance:none;flex:none;width:26px;height:26px;margin:0;border-radius:9px;cursor:pointer;display:grid;place-content:center;
+    background:var(--bg2);border:1.5px solid rgba(255,255,255,.14);box-shadow:inset 0 2px 5px rgba(0,0,0,.35);transition:.2s var(--ease)}
+  .optCheck input::after{content:"✓";font-size:15px;font-weight:900;color:#1a2516;transform:scale(0);transition:transform .2s var(--ease)}
+  .optCheck input:checked{background:linear-gradient(135deg,var(--yellow),var(--coral));border-color:transparent;box-shadow:0 4px 10px rgba(0,0,0,.28)}
+  .optCheck input:checked::after{transform:scale(1)}
+  .optCheck input:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,126,182,.7)}
   .seg{display:flex;gap:10px;flex-wrap:wrap}
   .seg button{all:unset;cursor:pointer;font-family:var(--font);font-weight:800;font-size:13px;padding:12px 20px;border-radius:12px;
     color:var(--ink-dim);background:var(--bg2);box-shadow:inset 0 2px 5px rgba(0,0,0,.3);transition:.2s var(--ease)}
@@ -348,7 +356,7 @@
    SQUISH app UI. All conversion logic lives in squish-core.js
    ============================================================ */
 const {FORMATS,CAT_COLOR,CAT_GLYPH,CONVERTERS,IMPOSSIBLE,norm,extOf,findConverter,
-  possibleTargets,impossibleReason,fmtBytes,benchScore,ENGINES,detectImagePdf,detectPdfPages}=SquishCore;
+  possibleTargets,impossibleReason,fmtBytes,benchScore,ENGINES,detectImagePdf,detectPdfPages,optionsFor}=SquishCore;
 
 let state={file:null,fromExt:null,toExt:null,conv:null,mode:"simple",opts:{},outBlob:null,outName:null,pdfImageBased:false,pdfPages:1,hasSelected:false};
 const $=s=>document.querySelector(s);
@@ -489,8 +497,9 @@ $("#hdrTo").addEventListener("click",()=>{if(state.hasSelected)enterPicking(true
 /* ---------- options ---------- */
 function showOptions(conv){
   const grid=$("#optGrid"),adv=$("#advBlock");grid.innerHTML="";adv.innerHTML="";state.opts={};state.mode="simple";
-  const simpleOpts=conv.options.filter(o=>!o.advanced),advOpts=conv.options.filter(o=>o.advanced);
-  conv.options.forEach(o=>state.opts[o.key]=o.def);
+  const options=optionsFor(conv,state.toExt);
+  const simpleOpts=options.filter(o=>!o.advanced),advOpts=options.filter(o=>o.advanced);
+  options.forEach(o=>state.opts[o.key]=o.def);
   simpleOpts.forEach(o=>grid.appendChild(buildOpt(o)));
   advOpts.forEach(o=>adv.appendChild(buildOpt(o)));
   let caveats=conv.caveats.slice(),danger=false;
@@ -514,8 +523,8 @@ function showOptions(conv){
   setTimeout(()=>{const first=grid.querySelector("input,button,.ddBtn");(first||$("#convertBtn")).focus();},420);
 }
 function buildOpt(o){
-  const wrap=document.createElement("div");wrap.className="opt clay";
-  const lab=document.createElement("label");lab.textContent=o.label;wrap.appendChild(lab);
+  const wrap=document.createElement("div");wrap.className="opt clay";wrap.dataset.key=o.key;
+  if(o.type!=="check"){const lab=document.createElement("label");lab.textContent=o.label;wrap.appendChild(lab);}
   if(o.type==="slider"){const row=document.createElement("div");row.className="slider";
     const r=document.createElement("input");r.type="range";r.min=o.min;r.max=o.max;r.step=o.step;r.value=o.def;
     const v=document.createElement("span");v.className="val";v.textContent=o.def+(o.unit||"");
@@ -526,6 +535,13 @@ function buildOpt(o){
     o.choices.forEach(([val,txt])=>{const b=document.createElement("button");b.type="button";b.textContent=txt;b.className=val===o.def?"on":"";
       b.addEventListener("click",()=>{state.opts[o.key]=val;[...seg.children].forEach(c=>c.classList.remove("on"));b.classList.add("on");updateEstimates();});seg.appendChild(b);});
     wrap.appendChild(seg);}
+  else if(o.type==="check"){const row=document.createElement("label");row.className="optCheck";
+    const cb=document.createElement("input");cb.type="checkbox";cb.id="opt-"+o.key;cb.checked=!!o.def;
+    const txt=document.createElement("span");txt.textContent=o.label;row.appendChild(cb);row.appendChild(txt);
+    cb.addEventListener("change",()=>{state.opts[o.key]=cb.checked;
+      (o.disables||[]).forEach(k=>{const el=document.querySelector('#options .opt[data-key="'+k+'"]');if(el)el.classList.toggle("dim",cb.checked);});
+      updateEstimates();});
+    wrap.appendChild(row);}
   else if(o.type==="text"){const t=document.createElement("input");t.type="text";t.placeholder=o.placeholder||"";t.value=o.def||"";
     t.addEventListener("input",()=>{state.opts[o.key]=t.value;});wrap.appendChild(t);}
   if(o.hint){const h=document.createElement("div");h.className="hint";h.textContent=o.hint;wrap.appendChild(h);}
@@ -568,6 +584,7 @@ function updateEstimates(){
   if(t==="jpg")factor=0.18*((state.opts.quality||85)/85);
   else if(t==="webp")factor=0.14*((state.opts.quality||85)/85);
   else if(t==="png")factor=0.9;else if(t==="dxf")factor=0.05;
+  else if(t==="jxl")factor=state.opts.lossless?0.6:0.12*((state.opts.quality||85)/85);
   else if(cat==="video"){const tg=state.opts.target;factor=tg==="small"?0.4:tg==="quality"?0.9:0.6;
     const rmap={keep:1,"1080":1,"720":0.55,"480":0.28};factor*=rmap[state.opts.resolution||"keep"]||1;}
   else if(cat==="audio")factor=0.3;else if(t==="gif")factor=1.6;

@@ -89,9 +89,11 @@ Some <u>underlined</u> text.
 `);
 write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語 "+[0x2764,0xFE0F,0x20,0x263A,0xFE0F,0x20,0x2714,0xFE0F,0x20,0x1F600].map(c=>String.fromCodePoint(c)).join("")+"\n");
 // A 48x32 PNG, then HEIC, TIFF, and PSD copies via macOS sips (skipped elsewhere).
+// fxPixel is the test pattern; squish-tests.html checks decoded pixels against it.
+const fxPixel=(x,y)=>[(x*5)%256,(y*7)%256,128,255];
 (function(){
   const zlib=require("zlib");const w=48,h=32,rows=[];
-  for(let y=0;y<h;y++){const row=[0];for(let x=0;x<w;x++)row.push((x*5)%256,(y*7)%256,128,255);rows.push(Buffer.from(row));}
+  for(let y=0;y<h;y++){const row=[0];for(let x=0;x<w;x++)row.push(...fxPixel(x,y));rows.push(Buffer.from(row));}
   const crcT=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;crcT[n]=c>>>0;}
   const crc=b=>{let c=0xFFFFFFFF;for(const x of b)c=crcT[(c^x)&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};
   const chunk=(t,d)=>{const len=Buffer.alloc(4);len.writeUInt32BE(d.length);const td=Buffer.concat([Buffer.from(t),d]);const c=Buffer.alloc(4);c.writeUInt32BE(crc(td));return Buffer.concat([len,td,c]);};
@@ -103,6 +105,16 @@ write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語 "
     catch(e){console.warn("skipped fx."+f+" (sips not available)");}
   }
 })();
+// The same 48x32 pattern as a lossless JPEG XL, through the vendored jSquash encoder.
+(async function(){
+  const C=require("../squish-core.js"),{pathToFileURL}=require("url"),v=path.join(__dirname,"..","vendor","jsquash-jxl");
+  const factory=(await import(pathToFileURL(path.join(v,"codec","enc","jxl_enc.js")).href)).default;
+  const enc=await factory({noInitialRun:true,wasmBinary:fs.readFileSync(path.join(v,"codec","enc","jxl_enc.wasm"))});
+  const w=48,h=32,px=new Uint8ClampedArray(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)px.set(fxPixel(x,y),(y*w+x)*4);
+  const out=enc.encode(px,w,h,C.jxlEncodeOptions({lossless:true}));
+  write("fx.jxl",Buffer.from(out.buffer,out.byteOffset,out.byteLength));
+})().catch(e=>{console.error("fx.jxl failed: "+(e&&e.message));process.exitCode=1;});
 // Mesh fixtures: a unit cube as binary STL, OBJ, and a deflated 3MF (as slicers write them).
 (function(){
   const C=require("../squish-core.js"),zlib=require("zlib"),enc=new TextEncoder();

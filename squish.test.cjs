@@ -568,6 +568,29 @@ section("Vote summary");
  eq("no server data falls back to local counts", C.summarizeVotes({["a"+String.fromCharCode(0x2192)+"b"]:3},{},null).requested[0].count, 3);
  eq("empty everything is empty", JSON.stringify(C.summarizeVotes({},{},null)), '{"requested":[],"dropped":[]}');}
 
+/* ---------- 31. JPEG XL ---------- */
+section("JPEG XL");
+ok("jxl is an image format with a description", C.FORMATS.jxl?.cat==="image"&&C.FORMATS.jxl.desc.length>10);
+ok("jxl input routes to imageDecode", ["png","jpg","webp","jxl"].filter(t=>t!=="jxl").every(t=>C.findConverter("jxl",t)?.engine==="imageDecode"));
+ok("raster, svgRaster, and imageDecode all write jxl", C.findConverter("png","jxl")?.engine==="raster"&&C.findConverter("jpg","jxl")?.engine==="raster"&&C.findConverter("svg","jxl")?.engine==="svgRaster"&&C.findConverter("heic","jxl")?.engine==="imageDecode");
+ok("jxl to jxl is not offered", !C.possibleTargets("jxl").has("jxl"));
+eq("mime for jxl", C.mimeFor("jxl"), "image/jxl");
+eq("encoder options: lossy at the slider quality, effort 4", JSON.stringify(C.jxlEncodeOptions({quality:"72",lossless:false})), '{"effort":4,"quality":72,"progressive":false,"epf":-1,"lossyPalette":false,"decodingSpeedTier":0,"photonNoiseIso":0,"lossyModular":false,"lossless":false}');
+ok("encoder options: lossless forces quality 100", (o=>o.lossless===true&&o.quality===100)(C.jxlEncodeOptions({quality:"40",lossless:true})));
+ok("encoder options: lossless accepts the string forms the UI and tests may send", ["1","true",true].every(v=>C.jxlEncodeOptions({lossless:v}).lossless)&&["0","false","",false,undefined].every(v=>!C.jxlEncodeOptions({lossless:v}).lossless));
+ok("encoder options: missing or junk quality falls back to 85 and clamps to 100", C.jxlEncodeOptions({}).quality===85&&C.jxlEncodeOptions({quality:"abc"}).quality===85&&C.jxlEncodeOptions({quality:"140"}).quality===100);
+ok("isJxl accepts a bare codestream and the ISOBMFF container", C.isJxl(new Uint8Array([0xff,0x0a,0x28,0x30]))&&C.isJxl(new Uint8Array([0,0,0,0x0c,0x4a,0x58,0x4c,0x20,0x0d,0x0a,0x87,0x0a,0,0])));
+ok("isJxl rejects png bytes, short input, and empty input", !C.isJxl(new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))&&!C.isJxl(new Uint8Array([0xff]))&&!C.isJxl(new Uint8Array(0)));
+ok("jxlSizeError allows 16 megapixels", C.jxlSizeError(4000,4000)===null&&C.jxlSizeError(1,1)===null);
+ok("jxlSizeError refuses 20 megapixels with a plain message", /20 megapixels/.test(C.jxlSizeError(5000,4000)||"")&&/Resize/.test(C.jxlSizeError(5000,4000)));
+{const raster=C.findConverter("png","jxl"),lossless=raster.options.find(o=>o.key==="lossless");
+ ok("the lossless option is a check box that only targets jxl and dims quality", lossless?.type==="check"&&lossless.def===false&&JSON.stringify(lossless.targets)==='["jxl"]'&&JSON.stringify(lossless.disables)==='["quality"]');
+ ok("optionsFor shows lossless for jxl only", C.optionsFor(raster,"jxl").some(o=>o.key==="lossless")&&!C.optionsFor(raster,"webp").some(o=>o.key==="lossless")&&!C.optionsFor(raster,"png").some(o=>o.key==="lossless"));
+ ok("optionsFor keeps untargeted options for every output", C.optionsFor(raster,"webp").some(o=>o.key==="quality")&&C.optionsFor(raster,"jxl").some(o=>o.key==="quality"));
+ ok("svgRaster and imageDecode also carry the lossless option", C.findConverter("svg","jxl").options.some(o=>o.key==="lossless")&&C.findConverter("heic","jxl").options.some(o=>o.key==="lossless"));}
+ok("canvasToJxl is a placeholder until squish-engines.js loads", typeof C.canvasToJxl==="function");
+pending.push(C.canvasToJxl({width:1,height:1},{},()=>{}).then(()=>ok("canvasToJxl placeholder rejects",false),e=>ok("canvasToJxl placeholder rejects with the not-loaded message",/squish-engines\.js is not loaded/.test(e.message))));
+
 /* ---------- summary ---------- */
 function finish(){
   ok("async checks finished before the summary", asyncMarker);
