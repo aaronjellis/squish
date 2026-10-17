@@ -39,6 +39,7 @@ it). `onProgress` labels show up under the progress bar.
 | `squish.html` | The app. Styles plus UI script inline; loads `squish-core.js` then `squish-engines.js` with plain `<script src>` tags. |
 | `squish-core.js` | Format library, converter registry, option schemas, the three canvas/DXF engines, and every pure helper the heavy engines need (page ranges, zip writer, block model, RTF reader, PDF text grouping, ffmpeg argument builder). UMD-ish IIFE: sets `globalThis.SquishCore` and `module.exports`. No DOM access at load time so Node can `require` it. |
 | `squish-engines.js` | Browser only. Lazy-imports the vendored libraries and replaces the four placeholder engines on `SquishCore.ENGINES`. Also holds `blocksFromHtml` (DOMParser), the docx writer, and the pdf writer. |
+| `squish-jxl-worker.js` | Module worker that runs the JPEG XL encoder off the main thread. Must be deployed next to `squish.html` because it imports from `vendor/` relative to its own URL. |
 | `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, and the @jsquash/jxl codec builds. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
 | `scripts/serve.cjs` | Dependency-free static server (`npm run serve`, port 8788) with correct MIME types for `.mjs` and `.wasm`. |
 | `scripts/vendor.sh` | Downloads the pinned libraries from unpkg. |
@@ -60,8 +61,10 @@ placeholders reject with "squish-engines.js is not loaded".
 ### Lazy library loading
 
 `loadLib(name, onP)` in engines.js does a dynamic `import()` of the vendored
-ESM build (paths are relative to the page URL, so the app and `vendor/` must
-be deployed side by side). Each library loads once per page. The ffmpeg
+ESM build (paths are relative to the page URL, so the app, `vendor/`, and
+`squish-jxl-worker.js` must be deployed side by side; the labs wrapper copies
+`squish.html`, the two scripts, `vendor/`, and the worker). Each library loads
+once per page. The ffmpeg
 wasm core is the exception: it is 31 MB, which exceeds the static asset
 limit of 25 MiB per file on the intended host, so it is fetched from
 `https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/` as blob URLs with a
@@ -94,8 +97,9 @@ Gotchas learned the hard way:
 - The jSquash JXL glue files are Emscripten factories that locate their
   `.wasm` with `import.meta.url`, so they work with a plain `import()` and
   no bundler. Pass `wasmBinary` to run them in Node (the fixture script does).
-- The jSquash encoder is synchronous and blocks the main thread. Effort 4 is
-  the compromise; 7 (the library default) takes several times longer.
+- The jSquash encoder is synchronous, so it runs in `squish-jxl-worker.js`
+  (a module worker) rather than on the main thread. Effort 4 is the
+  compromise; 7 (the library default) takes several times longer.
 - The harness that drives these sessions turns typed `\\uXXXX` into the
   character. Build such escapes with `String.fromCharCode` instead.
 
@@ -108,9 +112,16 @@ recent Firefox) skip the download, and otherwise loads the jSquash decoder
 (850 KB wasm, 315 KB gzipped) through `jxlDecode`. Writing: the raster,
 svgRaster, and imageDecode engines hand their canvas to `canvasToJxl` in
 engines, which refuses anything over `JXL_MAX_PIXELS` (16 megapixels,
-`jxlSizeError`), loads the single-thread jSquash encoder (1.4 MB wasm, 514 KB
-gzipped), and encodes with `jxlEncodeOptions` from core: effort 4, the quality
-slider, or lossless modular mode when the **Lossless** checkbox is on. The
+`jxlSizeError`) before reading any pixels, then posts the RGBA buffer
+(transferred) to `squish-jxl-worker.js`. The worker imports the single-thread
+jSquash encoder (1.4 MB wasm, 514 KB gzipped) once, reports `loading` and
+`encoding` stages that become progress labels, encodes with
+`jxlEncodeOptions` from core (effort 4, the quality slider, or lossless
+modular mode when the **Lossless** checkbox is on), and posts the result
+buffer back transferred. One worker lives per page. When `opts.signal`
+aborts, `canvasToJxl` terminates the worker and rejects with the cancelled
+error, so Cancel is immediate; a worker that crashes or fails to load is
+dropped the same way and the next conversion starts a fresh one. The
 multi-thread encoder builds are not vendored because they need
 SharedArrayBuffer and cross-origin isolation headers. Options can carry
 `targets: ["jxl"]`; `optionsFor(conv, to)` filters them and the UI only
