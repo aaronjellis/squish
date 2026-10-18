@@ -113,8 +113,27 @@ const fxPixel=(x,y)=>[(x*5)%256,(y*7)%256,128,255];
   const w=48,h=32,px=new Uint8ClampedArray(w*h*4);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++)px.set(fxPixel(x,y),(y*w+x)*4);
   const out=enc.encode(px,w,h,C.jxlEncodeOptions({lossless:true}));
-  write("fx.jxl",Buffer.from(out.buffer,out.byteOffset,out.byteLength));
-})().catch(e=>{console.error("fx.jxl failed: "+(e&&e.message));process.exitCode=1;});
+  const jxl=Buffer.from(out.buffer,out.byteOffset,out.byteLength);write("fx.jxl",jxl);
+  // The same picture as a baseline JPEG (libjpeg at quality 90, through the vendored transcoder's lossy path,
+  // since Node has no JPEG encoder), then that JPEG repacked losslessly into a JPEG XL that carries a jbrd box.
+  const t=path.join(__dirname,"..","vendor","jpeg-to-jxl","dist");
+  const make=(await import(pathToFileURL(path.join(t,"transcode.js")).href)).default;
+  const m=await make({wasmBinary:fs.readFileSync(path.join(t,"transcode.wasm"))});
+  const call=(fn,input,...extra)=>{const inPtr=m._malloc(input.length);m.HEAPU8.set(input,inPtr);const sizePtr=m._malloc(4);
+    try{const outPtr=fn(inPtr,input.length,sizePtr,...extra);if(!outPtr)throw new Error("transcoder returned nothing");
+      const n=m.HEAPU32[sizePtr>>2],res=Buffer.from(m.HEAPU8.subarray(outPtr,outPtr+n));m._jxl_free(outPtr);return res;}
+    finally{m._free(inPtr);m._free(sizePtr);}};
+  const jpg=call(m._jxl_to_jpeg_lossy,jxl,90);write("fx.jpg",jpg);
+  write("fx-from-jpeg.jxl",call(m._jpeg_to_jxl,jpg,3));
+  // A photo-like JPEG (160 by 120, gradients plus deterministic noise) so the size tests see real savings;
+  // on a tiny file like fx.jpg the container overhead outweighs them.
+  let seed=7;const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;};
+  const pw=160,ph=120,pp=new Uint8ClampedArray(pw*ph*4);
+  for(let y=0;y<ph;y++)for(let x=0;x<pw;x++){const i=(y*pw+x)*4,n=(rnd()-0.5)*48;
+    pp[i]=x*1.5+n;pp[i+1]=y*2+n;pp[i+2]=(x+y)*0.9+n;pp[i+3]=255;}
+  const photoJxl=enc.encode(pp,pw,ph,C.jxlEncodeOptions({lossless:true}));
+  write("photo.jpg",call(m._jxl_to_jpeg_lossy,Buffer.from(photoJxl.buffer,photoJxl.byteOffset,photoJxl.byteLength),90));
+})().catch(e=>{console.error("fx.jxl / fx.jpg failed: "+(e&&e.message));process.exitCode=1;});
 // Mesh fixtures: a unit cube as binary STL, OBJ, and a deflated 3MF (as slicers write them).
 (function(){
   const C=require("../squish-core.js"),zlib=require("zlib"),enc=new TextEncoder();

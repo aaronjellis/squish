@@ -83,36 +83,65 @@
   // The encoder runs in a module worker (squish-jxl-worker.js, deployed next to this file) so the
   // page keeps painting and Cancel can terminate a long encode. One worker per page; it is dropped
   // after an abort or a crash and the next conversion starts a fresh one, like the ffmpeg instance.
-  const JXL_WORKER_URL="squish-jxl-worker.js",JXL_ENC_LABEL="the JPEG XL encoder (500 KB, first time only)";
+  const JXL_WORKER_URL="squish-jxl-worker.js",JXL_ENC_LABEL="the JPEG XL encoder (500 KB, first time only)",
+    JXL_TR_LABEL="the JPEG transcoder (1 MB, first time only)";
+  const JXL_STAGE_LABELS={encoding:"encoding JPEG XL on your device",transcode:"repacking JPEG on your device",reconstruct:"restoring the original JPEG"};
   let jxlWorker=null,jxlJob=0;
   function getJxlWorker(){
     if(!jxlWorker)jxlWorker=new Worker(new URL(JXL_WORKER_URL,document.baseURI),{type:"module"});
     return jxlWorker;
   }
   function dropJxlWorker(w){try{w.terminate();}catch(e){}if(jxlWorker===w)jxlWorker=null;}
-  async function canvasToJxl(c,opts,onP){
-    const tooBig=C.jxlSizeError(c.width,c.height);if(tooBig)throw new Error(tooBig);
-    const signal=opts&&opts.signal;throwIfAborted(signal);
-    const data=c.getContext("2d").getImageData(0,0,c.width,c.height);
+  // Posts one job to the worker and resolves with the result buffer. `label` names the library being loaded,
+  // `failMsg` is the plain message for a job libjxl refused. Abort terminates the worker so Cancel is immediate.
+  function jxlWorkerJob(msg,transfer,signal,onP,label,failMsg){
+    throwIfAborted(signal);
     const w=getJxlWorker(),id=++jxlJob;
-    const out=await new Promise((res,rej)=>{
+    return new Promise((res,rej)=>{
       const cleanup=()=>{w.removeEventListener("message",onMsg);w.removeEventListener("error",onErr);if(signal)signal.removeEventListener("abort",onAbort);};
       const onMsg=ev=>{const r=ev.data;if(!r||r.id!==id)return;
-        if(r.stage==="loading"){if(onP)onP(0.02,"loading "+JXL_ENC_LABEL);return;}
-        if(r.stage==="encoding"){if(onP)onP(0.75,"encoding JPEG XL on your device");return;}
+        if(r.stage==="loading"){if(onP)onP(0.02,"loading "+label);return;}
+        if(r.stage&&r.ok===undefined){if(onP)onP(0.75,JXL_STAGE_LABELS[r.stage]||r.stage);return;}
         cleanup();
         if(r.ok)res(r.buffer);
-        else if(r.stage==="load"){dropJxlWorker(w);rej(new Error("Couldn't load "+JXL_ENC_LABEL+". "+r.message));}
-        else rej(new Error("Squish couldn't encode this image as JPEG XL. Try the Resize option if it is very large."));};
+        else if(r.stage==="load"){dropJxlWorker(w);rej(new Error("Couldn't load "+label+". "+r.message));}
+        else rej(new Error(failMsg));};
       const onErr=ev=>{cleanup();dropJxlWorker(w);if(ev&&ev.preventDefault)ev.preventDefault();
-        rej(new Error("Couldn't load "+JXL_ENC_LABEL+". "+(ev&&ev.message||"the worker failed")));};
+        rej(new Error("Couldn't load "+label+". "+(ev&&ev.message||"the worker failed")));};
       const onAbort=()=>{cleanup();dropJxlWorker(w);try{throwIfAborted(signal);}catch(e){rej(e);}};
       w.addEventListener("message",onMsg);w.addEventListener("error",onErr);
       if(signal)signal.addEventListener("abort",onAbort,{once:true});
-      const buf=data.data.buffer;
-      w.postMessage({id,data:buf,width:c.width,height:c.height,options:C.jxlEncodeOptions(opts)},[buf]);
+      w.postMessage({id,...msg},transfer);
     });
+  }
+  async function canvasToJxl(c,opts,onP){
+    const tooBig=C.jxlSizeError(c.width,c.height);if(tooBig)throw new Error(tooBig);
+    const signal=opts&&opts.signal;throwIfAborted(signal);
+    const data=c.getContext("2d").getImageData(0,0,c.width,c.height),buf=data.data.buffer;
+    const out=await jxlWorkerJob({kind:"encode",data:buf,width:c.width,height:c.height,options:C.jxlEncodeOptions(opts)},[buf],signal,onP,JXL_ENC_LABEL,
+      "Squish couldn't encode this image as JPEG XL. Try the Resize option if it is very large.");
     return new Blob([out],{type:"image/jxl"});
+  }
+  // jpg to jxl without touching pixels: libjxl repacks the JPEG's DCT coefficients (JxlEncoderAddJPEGFrame) and
+  // stores a jbrd box so the exact JPEG can be rebuilt. Arithmetic-coded, 12-bit, and CMYK JPEGs are refused.
+  const JPEG_REPACK_FAIL="Squish couldn't repack this JPEG. Turn off the reversible option to convert it the normal way.";
+  async function jpegToJxl(file,opts,onP){
+    const signal=opts&&opts.signal;throwIfAborted(signal);
+    const buf=await file.arrayBuffer();throwIfAborted(signal);
+    if(!C.isJpeg(new Uint8Array(buf)))throw new Error("This file doesn't contain JPEG data, so it can't be repacked. Turn off the reversible option to convert it the normal way.");
+    const out=await jxlWorkerJob({kind:"transcode",data:buf},[buf],signal,onP,JXL_TR_LABEL,JPEG_REPACK_FAIL);
+    return new Blob([out],{type:"image/jxl"});
+  }
+  // The reverse: a JPEG XL with a jbrd box back to the original JPEG, byte for byte (JxlDecoderSetJPEGBuffer).
+  async function jxlToJpeg(file,opts,onP){
+    const signal=opts&&opts.signal;throwIfAborted(signal);
+    const buf=await file.arrayBuffer();throwIfAborted(signal);
+    const bytes=new Uint8Array(buf);
+    if(!C.isJxl(bytes))throw new Error(JXL_BAD);
+    if(!C.jxlHasJpegReconstruction(bytes))throw new Error("This JPEG XL doesn't carry a JPEG to restore. Turn off the restore option to convert it the normal way.");
+    const out=await jxlWorkerJob({kind:"reconstruct",data:buf},[buf],signal,onP,JXL_TR_LABEL,
+      "Squish couldn't restore the JPEG from this file. Turn off the restore option to convert it the normal way.");
+    return new Blob([out],{type:"image/jpeg"});
   }
 
   let libheifReady=null;
@@ -154,7 +183,9 @@
   }
   async function imageDecode(file,opts,onP,toExt){
     throwIfAborted(opts.signal);
-    const from=norm(extOf(file.name));const src=await decodeToCanvas(file,from,onP);throwIfAborted(opts.signal);onP(0.7,"encoding");
+    const from=norm(extOf(file.name));
+    if(from==="jxl"&&toExt==="jpg"&&C.optOn(opts.restore))return jxlToJpeg(file,opts,onP);
+    const src=await decodeToCanvas(file,from,onP);throwIfAborted(opts.signal);onP(0.7,"encoding");
     const scale=parseFloat(opts.resize||"1"),c=document.createElement("canvas");
     c.width=Math.max(1,Math.round(src.width*scale));c.height=Math.max(1,Math.round(src.height*scale));
     const ctx=c.getContext("2d");if(toExt==="jpg"){ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);}
@@ -529,5 +560,5 @@
   }
 
   Object.assign(C.ENGINES,{pdfRaster,docs,pdfDocx,pdfPptx,ffmpeg,imageDecode});
-  C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;C.canvasToJxl=canvasToJxl;C.jxlDecode=jxlDecode;
+  C.loadLib=loadLib;C.openPdf=openPdf;C.blocksFromHtml=blocksFromHtml;C.blocksToDocx=blocksToDocx;C.blocksToPdf=blocksToPdf;C.getFFmpeg=getFFmpeg;C.canvasToJxl=canvasToJxl;C.jxlDecode=jxlDecode;C.jpegToJxl=jpegToJxl;C.jxlToJpeg=jxlToJpeg;
 })();

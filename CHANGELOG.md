@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Lossless JPEG recompression. Converting a JPEG to `.jxl` now defaults to
+  **Keep the JPEG data exactly (reversible)**, which repacks the JPEG's
+  DCT coefficients into JPEG XL without re-encoding pixels (libjxl's
+  `JxlEncoderAddJPEGFrame`). Photos come out about 20% smaller with
+  nothing lost. The quality slider, Lossless, and Resize are dimmed while
+  it is on; turn it off to re-encode the pixels as before.
+- The reverse. A `.jxl` that carries its original JPEG offers **Restore the
+  original JPEG** when converting to `.jpg`, and gives back the identical
+  file byte for byte. Plain JPEG XL files convert as before.
+- Both run in the existing JPEG XL worker, so Cancel stops them at once.
+  The transcoder is a 2.7 MB wasm (1 MB over the wire), loaded on first use.
+
 ## 1.2.0 (2026-10-18)
 
 JPEG XL joins the picker in both directions.

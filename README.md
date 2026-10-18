@@ -18,8 +18,8 @@ library-backed engines need an http origin because they load modules from
 
 | From | To | Engine |
 | --- | --- | --- |
-| png, jpg, webp, bmp, gif, avif, ico | png, jpg, webp, ico, jxl | canvas; libjxl (wasm) for jxl |
-| heic, tiff, psd, jxl | png, jpg, webp, jxl | libheif, UTIF, ag-psd, libjxl (wasm) |
+| png, jpg, webp, bmp, gif, avif, ico | png, jpg, webp, ico, jxl | canvas; libjxl (wasm) for jxl, and a lossless JPEG repack for jpg to jxl |
+| heic, tiff, psd, jxl | png, jpg, webp, jxl | libheif, UTIF, ag-psd, libjxl (wasm); a jxl made from a JPEG restores that JPEG byte for byte |
 | svg | png, jpg, webp, jxl | canvas; libjxl (wasm) for jxl |
 | svg | dxf | in-house emitter (true splines, shapes, arcs, transforms) |
 | pdf | png, jpg | pdf.js |
@@ -59,7 +59,11 @@ totals from it. Every conversion has a Cancel button.
 
 - AVIF can be read but not written. Browsers don't expose an AVIF encoder.
 - JPEG XL output is capped at 16 megapixels, the most the wasm encoder
-  handles in a browser tab. Resize larger images first.
+  handles in a browser tab. Resize larger images first. The reversible
+  JPEG repack has no such cap because it never touches pixels.
+- The reversible JPEG repack refuses arithmetic-coded, 12-bit, and CMYK
+  JPEGs. Turn the option off to convert those the normal way. Very small
+  JPEGs can come out slightly larger because of the container overhead.
 - PDF to Word and PDF to PowerPoint need real, selectable text. Squish does
   not do OCR. Slides are pictures of the pages, not editable text.
 - Characters no bundled font covers (emoji, CJK) are pictures in PDF

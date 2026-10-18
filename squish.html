@@ -356,7 +356,7 @@
    SQUISH app UI. All conversion logic lives in squish-core.js
    ============================================================ */
 const {FORMATS,CAT_COLOR,CAT_GLYPH,CONVERTERS,IMPOSSIBLE,norm,extOf,findConverter,
-  possibleTargets,impossibleReason,fmtBytes,benchScore,ENGINES,detectImagePdf,detectPdfPages,optionsFor}=SquishCore;
+  possibleTargets,impossibleReason,fmtBytes,benchScore,ENGINES,detectImagePdf,detectPdfPages,detectJxlJpeg,optionsFor}=SquishCore;
 
 let state={file:null,fromExt:null,toExt:null,conv:null,mode:"simple",opts:{},outBlob:null,outName:null,pdfImageBased:false,pdfPages:1,hasSelected:false};
 const $=s=>document.querySelector(s);
@@ -421,8 +421,9 @@ async function acceptFile(file){
   $("#hdrFromExt").textContent="."+state.fromExt;$("#hdrFromName").textContent=file.name;
   setThumb($("#hdrThumb"),file,state.fromExt);
   $("#hdr").classList.add("show");$("#hdr").classList.remove("picked");
-  state.pdfImageBased=false;state.pdfPages=1;
+  state.pdfImageBased=false;state.pdfPages=1;state.jxlJpeg=false;
   if(state.fromExt==="pdf"){state.pdfImageBased=await detectImagePdf(file);state.pdfPages=await detectPdfPages(file);}
+  if(state.fromExt==="jxl")state.jxlJpeg=await detectJxlJpeg(file); // a JPEG XL made from a JPEG can give it back
   enterPicking(false);logEvent("input_"+state.fromExt);
 }
 function setThumb(el,file,ext){const x=el.querySelector(".thumbX");el.innerHTML="";if(x)el.appendChild(x);
@@ -497,11 +498,12 @@ $("#hdrTo").addEventListener("click",()=>{if(state.hasSelected)enterPicking(true
 /* ---------- options ---------- */
 function showOptions(conv){
   const grid=$("#optGrid"),adv=$("#advBlock");grid.innerHTML="";adv.innerHTML="";state.opts={};state.mode="simple";
-  const options=optionsFor(conv,state.toExt);
+  const options=optionsFor(conv,state.toExt,state.fromExt,{jpegReconstruction:state.jxlJpeg});
   const simpleOpts=options.filter(o=>!o.advanced),advOpts=options.filter(o=>o.advanced);
   options.forEach(o=>state.opts[o.key]=o.def);
   simpleOpts.forEach(o=>grid.appendChild(buildOpt(o)));
   advOpts.forEach(o=>adv.appendChild(buildOpt(o)));
+  options.filter(o=>o.type==="check"&&o.def).forEach(o=>applyDisables(o,true)); // a box that starts checked dims its options at once
   let caveats=conv.caveats.slice(),danger=false;
   if(conv.engine==="pdfRaster")caveats=state.pdfPages>1?[`All ${state.pdfPages} pages are saved as separate images, bundled in one zip.`]:[];
   if(state.fromExt==="pdf"&&state.toExt==="docx"&&state.pdfImageBased){danger=true;
@@ -538,15 +540,14 @@ function buildOpt(o){
   else if(o.type==="check"){const row=document.createElement("label");row.className="optCheck";
     const cb=document.createElement("input");cb.type="checkbox";cb.id="opt-"+o.key;cb.checked=!!o.def;
     const txt=document.createElement("span");txt.textContent=o.label;row.appendChild(cb);row.appendChild(txt);
-    cb.addEventListener("change",()=>{state.opts[o.key]=cb.checked;
-      (o.disables||[]).forEach(k=>{const el=document.querySelector('#options .opt[data-key="'+k+'"]');if(el)el.classList.toggle("dim",cb.checked);});
-      updateEstimates();});
+    cb.addEventListener("change",()=>{state.opts[o.key]=cb.checked;applyDisables(o,cb.checked);updateEstimates();});
     wrap.appendChild(row);}
   else if(o.type==="text"){const t=document.createElement("input");t.type="text";t.placeholder=o.placeholder||"";t.value=o.def||"";
     t.addEventListener("input",()=>{state.opts[o.key]=t.value;});wrap.appendChild(t);}
   if(o.hint){const h=document.createElement("div");h.className="hint";h.textContent=o.hint;wrap.appendChild(h);}
   return wrap;
 }
+function applyDisables(o,on){(o.disables||[]).forEach(k=>{const el=document.querySelector('#options .opt[data-key="'+k+'"]');if(el)el.classList.toggle("dim",on);});}
 /* custom dropdown widget */
 let openDDel=null;
 function closeDD(){if(openDDel){openDDel.classList.remove("open");openDDel=null;}}
@@ -581,14 +582,14 @@ function applyMode(){const b=$("#advBlock"),on=state.mode==="advanced"&&!!b.inne
 /* ---------- estimates ---------- */
 function updateEstimates(){
   const inSize=state.file.size;let factor=1;const t=state.toExt,cat=FORMATS[t]?.cat;
-  if(t==="jpg")factor=0.18*((state.opts.quality||85)/85);
+  if(t==="jpg")factor=state.opts.restore?1.25:0.18*((state.opts.quality||85)/85);
   else if(t==="webp")factor=0.14*((state.opts.quality||85)/85);
   else if(t==="png")factor=0.9;else if(t==="dxf")factor=0.05;
-  else if(t==="jxl")factor=state.opts.lossless?0.6:0.12*((state.opts.quality||85)/85);
+  else if(t==="jxl")factor=state.opts.transcode?0.8:state.opts.lossless?0.6:0.12*((state.opts.quality||85)/85);
   else if(cat==="video"){const tg=state.opts.target;factor=tg==="small"?0.4:tg==="quality"?0.9:0.6;
     const rmap={keep:1,"1080":1,"720":0.55,"480":0.28};factor*=rmap[state.opts.resolution||"keep"]||1;}
   else if(cat==="audio")factor=0.3;else if(t==="gif")factor=1.6;
-  if(state.opts.resize){const s=parseFloat(state.opts.resize);factor*=s*s;}
+  if(state.opts.resize&&!state.opts.transcode&&!state.opts.restore){const s=parseFloat(state.opts.resize);factor*=s*s;}
   const est=Math.max(2048,inSize*factor);$("#estSize").textContent="~"+fmtBytes(est);
   const weight={raster:.4,svgRaster:.5,svgDxf:.3,pdfRaster:2,docs:.5,pdfDocx:1.5,pdfPptx:2.5,imageDecode:1,data:.2,mesh:.5,ffmpeg:12}[state.conv.engine]||1;
   let secs=(inSize/1048576)*weight/benchScore+0.5;secs=Math.min(secs,cat==="video"?180:30);

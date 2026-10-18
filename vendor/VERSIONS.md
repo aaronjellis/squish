@@ -16,6 +16,7 @@ Downloaded by `scripts/vendor.sh` from unpkg. Do not edit by hand.
 | ag-psd | 31.0.3 | ag-psd/bundle.js (MIT) |
 | pptxgenjs | 4.0.1 | pptxgenjs/pptxgen.bundle.js (MIT) |
 | @jsquash/jxl | 1.3.0 | jsquash-jxl/codec/dec/jxl_dec.{js,wasm}, jsquash-jxl/codec/enc/jxl_enc.{js,wasm} (Apache-2.0, libjxl compiled to wasm; single-thread encoder only) |
+| jpeg-to-jxl | 0.2.0 | jpeg-to-jxl/dist/transcode.{js,wasm} (BSD-3-Clause, see jpeg-to-jxl/LICENSE; libjxl JPEG transcoding and reconstruction, 2.7 MB wasm, single thread) |
 | dejavu-fonts-ttf | 2.37 | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads
