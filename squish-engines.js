@@ -26,7 +26,6 @@
     agpsd:{url:"vendor/ag-psd/bundle.js",kind:"script",global:"agPsd",label:"the Photoshop reader"},
     pptx:{url:"vendor/pptxgenjs/pptxgen.bundle.js",kind:"script",global:"PptxGenJS",label:"the PowerPoint writer"},
     jxldec:{url:"vendor/jsquash-jxl/codec/dec/jxl_dec.js",label:"the JPEG XL decoder (300 KB, first time only)"},
-    jxlenc:{url:"vendor/jsquash-jxl/codec/enc/jxl_enc.js",label:"the JPEG XL encoder (500 KB, first time only)"},
   };
   const loaded={};
   // UMD builds: inject a script tag and hand back the global it defines.
@@ -66,7 +65,7 @@
   function canvasFromRgba(rgba,w,h){const c=document.createElement("canvas");c.width=w;c.height=h;
     c.getContext("2d").putImageData(new ImageData(rgba instanceof Uint8ClampedArray?rgba:new Uint8ClampedArray(rgba.buffer||rgba),w,h),0,0);return c;}
   /* ---------- JPEG XL (jSquash builds of libjxl; single-thread encoder, no SharedArrayBuffer needed) ---------- */
-  let jxlDecReady=null,jxlEncReady=null;
+  let jxlDecReady=null;
   const JXL_BAD="Squish couldn't read this JPEG XL file. It may be damaged or not an image.";
   // The Emscripten glue exports a factory; each codec is instantiated once per page.
   async function jxlDecode(buf,onP){
@@ -81,16 +80,39 @@
       const c=document.createElement("canvas");c.width=bmp.width;c.height=bmp.height;c.getContext("2d").drawImage(bmp,0,0);if(bmp.close)bmp.close();return c;}
     catch(e){return null;}
   }
+  // The encoder runs in a module worker (squish-jxl-worker.js, deployed next to this file) so the
+  // page keeps painting and Cancel can terminate a long encode. One worker per page; it is dropped
+  // after an abort or a crash and the next conversion starts a fresh one, like the ffmpeg instance.
+  const JXL_WORKER_URL="squish-jxl-worker.js",JXL_ENC_LABEL="the JPEG XL encoder (500 KB, first time only)";
+  let jxlWorker=null,jxlJob=0;
+  function getJxlWorker(){
+    if(!jxlWorker)jxlWorker=new Worker(new URL(JXL_WORKER_URL,document.baseURI),{type:"module"});
+    return jxlWorker;
+  }
+  function dropJxlWorker(w){try{w.terminate();}catch(e){}if(jxlWorker===w)jxlWorker=null;}
   async function canvasToJxl(c,opts,onP){
     const tooBig=C.jxlSizeError(c.width,c.height);if(tooBig)throw new Error(tooBig);
-    const mod=await loadLib("jxlenc",onP);if(!jxlEncReady)jxlEncReady=mod.default({noInitialRun:true});
-    const m=await jxlEncReady;throwIfAborted(opts&&opts.signal);
+    const signal=opts&&opts.signal;throwIfAborted(signal);
     const data=c.getContext("2d").getImageData(0,0,c.width,c.height);
-    if(onP)onP(0.75,"encoding JPEG XL on your device");
-    await new Promise(r=>setTimeout(r,30)); // the encoder is synchronous, so let the label paint first
-    let out=null;try{out=m.encode(data.data,c.width,c.height,C.jxlEncodeOptions(opts));}catch(e){out=null;}
-    if(!out||!out.byteLength)throw new Error("Squish couldn't encode this image as JPEG XL. Try the Resize option if it is very large.");
-    return new Blob([new Uint8Array(out.buffer,out.byteOffset,out.byteLength)],{type:"image/jxl"});
+    const w=getJxlWorker(),id=++jxlJob;
+    const out=await new Promise((res,rej)=>{
+      const cleanup=()=>{w.removeEventListener("message",onMsg);w.removeEventListener("error",onErr);if(signal)signal.removeEventListener("abort",onAbort);};
+      const onMsg=ev=>{const r=ev.data;if(!r||r.id!==id)return;
+        if(r.stage==="loading"){if(onP)onP(0.02,"loading "+JXL_ENC_LABEL);return;}
+        if(r.stage==="encoding"){if(onP)onP(0.75,"encoding JPEG XL on your device");return;}
+        cleanup();
+        if(r.ok)res(r.buffer);
+        else if(r.stage==="load"){dropJxlWorker(w);rej(new Error("Couldn't load "+JXL_ENC_LABEL+". "+r.message));}
+        else rej(new Error("Squish couldn't encode this image as JPEG XL. Try the Resize option if it is very large."));};
+      const onErr=ev=>{cleanup();dropJxlWorker(w);if(ev&&ev.preventDefault)ev.preventDefault();
+        rej(new Error("Couldn't load "+JXL_ENC_LABEL+". "+(ev&&ev.message||"the worker failed")));};
+      const onAbort=()=>{cleanup();dropJxlWorker(w);try{throwIfAborted(signal);}catch(e){rej(e);}};
+      w.addEventListener("message",onMsg);w.addEventListener("error",onErr);
+      if(signal)signal.addEventListener("abort",onAbort,{once:true});
+      const buf=data.data.buffer;
+      w.postMessage({id,data:buf,width:c.width,height:c.height,options:C.jxlEncodeOptions(opts)},[buf]);
+    });
+    return new Blob([out],{type:"image/jxl"});
   }
 
   let libheifReady=null;
