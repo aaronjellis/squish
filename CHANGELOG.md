@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-10-18)
+
+JPEG XL joins the picker in both directions.
 
 ### Added
 
