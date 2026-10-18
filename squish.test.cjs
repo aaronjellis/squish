@@ -358,7 +358,7 @@ pending.push((async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}
   ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})());
 // text hygiene across shipped and doc files
 const DASH=String.fromCharCode(0x2014);
-const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh"];
+const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh",".github/workflows/build-jxl-transcode.yml","scripts/build-jxl-transcode.sh","scripts/jxl-transcode/README.md","scripts/jxl-transcode/CMakeLists.txt","scripts/jxl-transcode/transcode.c"];
 const dashy=files.filter(f=>fs.readFileSync(path.join(__dirname,f),"utf8").includes(DASH));
 ok("no em-dashes in shipped or doc files"+(dashy.length?" ("+dashy+")":""), dashy.length===0);
 const OLD_SIZE=new RegExp("3"+"2 MB");
@@ -366,6 +366,13 @@ const sizes=files.filter(f=>OLD_SIZE.test(fs.readFileSync(path.join(__dirname,f)
 ok("the ffmpeg core size is stated one way (31 MB)"+(sizes.length?" ("+sizes+")":""), sizes.length===0);
 const pkg=require("./package.json");
 ok("dev dependencies are pinned exactly", Object.values(pkg.devDependencies||{}).every(v=>/^\d+\.\d+\.\d+$/.test(v)));
+const versions=fs.readFileSync(path.join(__dirname,"vendor/VERSIONS.md"),"utf8");
+const statedWasm=(versions.match(/transcode\.wasm is (\d+) bytes/)||[])[1];
+const realWasm=fs.statSync(path.join(__dirname,"vendor/jpeg-to-jxl/dist/transcode.wasm")).size;
+ok("VERSIONS.md states the real transcode.wasm size ("+realWasm+")", Number(statedWasm)===realWasm);
+const statedSha=(versions.match(/sha256 ([0-9a-f]{64})/)||[])[1];
+const realSha=require("crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname,"vendor/jpeg-to-jxl/dist/transcode.wasm"))).digest("hex");
+ok("VERSIONS.md states the real transcode.wasm sha256", statedSha===realSha);
 
 /* ---------- 16. SVG shapes, arcs, transforms ---------- */
 section("SVG shapes, arcs, transforms");

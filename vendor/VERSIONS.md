@@ -1,6 +1,8 @@
 # Vendored libraries
 
-Downloaded by `scripts/vendor.sh` from unpkg. Do not edit by hand.
+Downloaded by `scripts/vendor.sh` from unpkg, except the JPEG transcoder, which
+`.github/workflows/build-jxl-transcode.yml` builds from pinned sources. Do not
+edit by hand.
 
 | Library | Version | Files |
 | --- | --- | --- |
@@ -16,7 +18,7 @@ Downloaded by `scripts/vendor.sh` from unpkg. Do not edit by hand.
 | ag-psd | 31.0.3 | ag-psd/bundle.js (MIT) |
 | pptxgenjs | 4.0.1 | pptxgenjs/pptxgen.bundle.js (MIT) |
 | @jsquash/jxl | 1.3.0 | jsquash-jxl/codec/dec/jxl_dec.{js,wasm}, jsquash-jxl/codec/enc/jxl_enc.{js,wasm} (Apache-2.0, libjxl compiled to wasm; single-thread encoder only) |
-| jpeg-to-jxl | 0.2.0 | jpeg-to-jxl/dist/transcode.{js,wasm} (BSD-3-Clause, see jpeg-to-jxl/LICENSE; libjxl JPEG transcoding and reconstruction, 2.7 MB wasm, single thread) |
+| jpeg-to-jxl glue | 0.2.0 | jpeg-to-jxl/dist/transcode.{js,wasm} (BSD-3-Clause, see jpeg-to-jxl/LICENSE; libjxl JPEG transcoding and reconstruction, single thread). Built by the workflow from libjxl v0.12.0 with emsdk 3.1.51 and wasm-opt -Oz, sources in scripts/jxl-transcode/. transcode.wasm is 2726933 bytes, sha256 e78b7fcf31f94d7cfa720121ab683ba644e37aed48ba5a9f94e088162d044399. |
 | dejavu-fonts-ttf | 2.37 | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads

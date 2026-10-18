@@ -1,0 +1,50 @@
+# Rebuilds vendor/jpeg-to-jxl/dist/transcode.{js,wasm} from pinned sources and
+# uploads the result as an artifact. It never commits: download the artifact,
+# copy the two files into vendor/jpeg-to-jxl/dist/, and update
+# vendor/VERSIONS.md and scripts/jxl-transcode/README.md with the pins, sizes,
+# and hashes from the run summary.
+#
+# Runs on demand (Actions tab, or `gh workflow run build-jxl-transcode.yml`)
+# and on any push that changes the build inputs.
+name: Build JPEG transcoder
+
+on:
+  workflow_dispatch:
+    inputs:
+      libjxl_tag:
+        description: libjxl git tag
+        default: v0.12.0
+        required: true
+      emsdk_version:
+        description: Emscripten SDK version
+        default: 3.1.51
+        required: true
+  push:
+    paths:
+      - .github/workflows/build-jxl-transcode.yml
+      - scripts/build-jxl-transcode.sh
+      - scripts/jxl-transcode/**
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LIBJXL_TAG: ${{ inputs.libjxl_tag || 'v0.12.0' }}
+      EMSDK_VERSION: ${{ inputs.emsdk_version || '3.1.51' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+      - run: emcc --version
+      - run: bash scripts/build-jxl-transcode.sh
+        env:
+          WORK_DIR: ${{ runner.temp }}/jxl-transcode
+          OUT_DIR: ${{ runner.temp }}/jxl-transcode/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jxl-transcode-libjxl-${{ env.LIBJXL_TAG }}-emsdk-${{ env.EMSDK_VERSION }}
+          path: ${{ runner.temp }}/jxl-transcode/dist/transcode.*
+          if-no-files-found: error
+          retention-days: 90

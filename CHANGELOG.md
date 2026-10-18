@@ -16,6 +16,14 @@
 - Both run in the existing JPEG XL worker, so Cancel stops them at once.
   The transcoder is a 2.7 MB wasm (1 MB over the wire), loaded on first use.
 
+### Changed
+
+- The JPEG transcoder wasm is now built by this repo's own GitHub Actions
+  workflow from libjxl v0.12.0 and Emscripten 3.1.51, with jpeg-to-jxl's
+  BSD-3-Clause glue checked in under `scripts/jxl-transcode/`, instead of
+  being copied from the npm package (which was compiled from an unpinned
+  libjxl checkout). Same exports, same byte-identical round trip.
+
 ## 1.2.0 (2026-10-18)
 
 JPEG XL joins the picker in both directions.
