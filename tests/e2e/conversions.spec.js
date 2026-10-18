@@ -121,6 +121,56 @@ test("app: the lossless checkbox only shows for jxl",async({page})=>{
   await expect(page.locator("#optGrid .opt[data-key=lossless]")).toHaveCount(0);
 });
 
+test("app: jpg to jxl keeps the JPEG data exactly by default",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("photo.jpg"));
+  const input=page.locator("#targetInput");await expect(input).toBeVisible();
+  await input.fill(".jxl");await input.press("Enter");
+  const box=page.locator("#optGrid .opt[data-key=transcode] input[type=checkbox]");
+  await expect(box).toBeVisible();await expect(box).toBeChecked();
+  await expect(page.locator("#optGrid .opt[data-key=quality]")).toHaveClass(/dim/);
+  await expect(page.locator("#optGrid .opt[data-key=lossless]")).toHaveClass(/dim/);
+  await page.locator("#convertBtn").click();
+  await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:60000});
+  await expect(page.locator("#resultSub")).toContainText("JXL");
+  const [dl]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:/Download/}).click()]);
+  expect(dl.suggestedFilename()).toBe("photo.jxl");
+  const fs=require("fs"),out=fs.readFileSync(await dl.path()),src=fs.readFileSync(fx("photo.jpg"));
+  expect(out.length).toBeLessThan(src.length*0.9);
+  expect(out.subarray(4,8).toString("latin1")).toBe("JXL ");
+});
+
+test("app: a jxl made from a JPEG offers to restore it, byte for byte",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("fx-from-jpeg.jxl"));
+  const input=page.locator("#targetInput");await expect(input).toBeVisible();
+  await input.fill(".jpg");await input.press("Enter");
+  const box=page.locator("#optGrid .opt[data-key=restore] input[type=checkbox]");
+  await expect(box).toBeVisible();await expect(box).toBeChecked();
+  await expect(page.locator("#optGrid .opt[data-key=quality]")).toHaveClass(/dim/);
+  await page.locator("#convertBtn").click();
+  await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:60000});
+  const [dl]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:/Download/}).click()]);
+  expect(dl.suggestedFilename()).toBe("fx-from-jpeg.jpg");
+  const fs=require("fs");
+  expect(fs.readFileSync(await dl.path()).equals(fs.readFileSync(fx("fx.jpg")))).toBe(true);
+});
+
+test("app: the restore and reversible checkboxes only show when they can work",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("fx.jxl"));
+  const input=page.locator("#targetInput");await expect(input).toBeVisible();
+  await input.fill(".jpg");await input.press("Enter");
+  await expect(page.locator("#convertBtn")).toBeVisible();
+  await expect(page.locator("#optGrid .opt[data-key=restore]")).toHaveCount(0);
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("fx.png"));
+  await expect(input).toBeVisible();await input.fill(".jxl");await input.press("Enter");
+  await expect(page.locator("#convertBtn")).toBeVisible();
+  await expect(page.locator("#optGrid .opt[data-key=transcode]")).toHaveCount(0);
+  await expect(page.locator("#optGrid .opt[data-key=quality]")).not.toHaveClass(/dim/);
+});
+
 test("app: md to epub",async({page})=>{
   const r=await convert(page,"short.md","epub");
   expect(r.title).toBe("ta-da!");expect(r.sub).toContain("EPUB");

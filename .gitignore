@@ -6,7 +6,7 @@
 .superpowers/
 CLAUDE.local.md
 _bmad
-dist/
+/dist/
 node_modules/
 playwright-report/
 test-results/

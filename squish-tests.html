@@ -282,6 +282,41 @@ async function run(){
       ok("the next jxl encode after a cancel succeeds on a fresh worker", t.r?.type==="image/jxl" && t.r.size>0, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));
     }
   }
+  group("JPEG transcoding (jpg to jxl without re-encoding, and back)");
+  {
+    const jpgFx=await fx("fx.jpg","image/jpeg"),jpgBytes=new Uint8Array(await jpgFx.arrayBuffer());
+    const sameBytes=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>x===b[i]);
+    t = await tryEngine("raster",jpgFx,{quality:"85",lossless:false,transcode:true,resize:"1"},"jxl");
+    let tb = t.r instanceof Blob ? new Uint8Array(await t.r.arrayBuffer()) : null;
+    ok("jpg → jxl (reversible) is a JPEG XL container that carries a jbrd box", t.r?.type==="image/jxl" && tb && C.isJxl(tb) && C.jxlHasJpegReconstruction(tb), t.err?String(t.err.message):(tb?C.fmtBytes(tb.length):""));
+    ok("…and a tiny file only grows by the container overhead", tb && tb.length<jpgBytes.length+200, tb?`${tb.length} vs ${jpgBytes.length} bytes`:"");
+    const photoFx=await fx("photo.jpg","image/jpeg");
+    t = await tryEngine("raster",photoFx,{quality:"85",lossless:false,transcode:true,resize:"1"},"jxl");
+    ok("photo.jpg → jxl (reversible) is at least 10% smaller than the JPEG", t.r instanceof Blob && t.r.size<photoFx.size*0.9, t.err?String(t.err.message):`${t.r?.size} vs ${photoFx.size} bytes`);
+    const photoBack = t.r instanceof Blob ? await tryEngine("imageDecode",new File([t.r],"photo.jxl",{type:"image/jxl"}),{quality:"85",restore:true,resize:"1"},"jpg") : t;
+    ok("…and restores to the identical photo.jpg", photoBack.r instanceof Blob && sameBytes(new Uint8Array(await photoBack.r.arrayBuffer()),new Uint8Array(await photoFx.arrayBuffer())), photoBack.err?String(photoBack.err.message):"");
+    ok("…and the progress labels say it is repacking", t.labels.some(l=>/repacking/.test(l)), t.labels.join(" | "));
+    let back=null;try{back=tb?await C.jxlDecode(tb.buffer):null;}catch(e){back=null;}
+    ok("…and the wasm decoder reads it as 48×32", back && back.width===48 && back.height===32, back?`${back.width}×${back.height}`:"undecodable");
+    const carried=new File([tb||new Uint8Array(0)],"fx-from-jpeg.jxl",{type:"image/jxl"});
+    t = await tryEngine("imageDecode",carried,{quality:"85",restore:true,resize:"1"},"jpg");
+    let rb = t.r instanceof Blob ? new Uint8Array(await t.r.arrayBuffer()) : null;
+    ok("jxl (from a JPEG) → jpg with restore gives back the identical bytes", t.r?.type==="image/jpeg" && sameBytes(rb,jpgBytes), t.err?String(t.err.message):(rb?`${rb.length} bytes`:""));
+    const fixtureJxl=await fx("fx-from-jpeg.jxl","image/jxl");
+    t = await tryEngine("imageDecode",fixtureJxl,{quality:"85",restore:true,resize:"1"},"jpg");
+    rb = t.r instanceof Blob ? new Uint8Array(await t.r.arrayBuffer()) : null;
+    ok("the fx-from-jpeg.jxl fixture restores to fx.jpg exactly", sameBytes(rb,jpgBytes), t.err?String(t.err.message):(rb?`${rb.length} bytes`:""));
+    t = await tryEngine("imageDecode",fixtureJxl,{quality:"85",restore:false,resize:"1"},"jpg");
+    rb = t.r instanceof Blob ? new Uint8Array(await t.r.arrayBuffer()) : null;
+    const rd = t.r instanceof Blob ? await decode(t.r) : null;
+    ok("jxl (from a JPEG) → jpg with restore off re-encodes the pixels instead", t.r?.type==="image/jpeg" && C.isJpeg(rb) && !sameBytes(rb,jpgBytes) && rd && rd.w===48, t.err?String(t.err.message):(rd?`${rd.w}×${rd.h}`:""));
+    t = await tryEngine("raster",await fx("fx.png","image/png"),{quality:"85",lossless:false,transcode:true,resize:"1"},"jxl");
+    ok("a png with the reversible option on fails with a plain message", t.err && /JPEG/.test(t.err.message) && /reversible option/.test(t.err.message), String(t.err?.message));
+    t = await tryEngine("imageDecode",await fx("fx.jxl","image/jxl"),{quality:"85",restore:true,resize:"1"},"jpg");
+    ok("a plain jxl with the restore option on fails with a plain message", t.err && /carry a JPEG/.test(t.err.message) && /restore option/.test(t.err.message), String(t.err?.message));
+    ok("jxlHasJpegReconstruction is false for the lossless fx.jxl fixture", !C.jxlHasJpegReconstruction(new Uint8Array(await (await fx("fx.jxl","image/jxl")).arrayBuffer())), "");
+    ok("detectJxlJpeg sniffs the fixture files the way the app does", (await C.detectJxlJpeg(fixtureJxl))===true && (await C.detectJxlJpeg(await fx("fx.jxl","image/jxl")))===false, "");
+  }
   group("Meshes");
   t = await tryEngine("mesh",await fx("cube.3mf","model/3mf"),{},"stl");
   ok("deflated cube.3mf → binary stl of 12 triangles", t.r instanceof Blob && t.r.size===84+50*12, t.err?String(t.err.message):C.fmtBytes(t.r?.size||0));

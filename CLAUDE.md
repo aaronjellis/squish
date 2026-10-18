@@ -14,10 +14,10 @@ converter has a real engine, and every format in the picker is used by one.
 
 | Engine | Conversions | Implementation |
 | --- | --- | --- |
-| `raster` | png/jpg/webp/bmp/gif/avif/ico to png/jpg/webp/ico/jxl | canvas plus an in-house ICO writer, in core; jxl output through `canvasToJxl` in engines |
+| `raster` | png/jpg/webp/bmp/gif/avif/ico to png/jpg/webp/ico/jxl | canvas plus an in-house ICO writer, in core; jxl output through `canvasToJxl` in engines, or `jpegToJxl` (lossless JPEG repack) when the transcode option is on |
 | `svgRaster` | svg to png/jpg/webp/jxl | canvas, in core |
 | `svgDxf` | svg to dxf | geometry in core (`shapesToDxf`: paths, lines, rects, circles, ellipses, polygons, arcs, transforms); DOM walk in engines |
-| `imageDecode` | heic/heif/tiff/tif/psd/jxl to png/jpg/webp/jxl | libheif-js, UTIF, ag-psd, jSquash JXL (libjxl wasm) in engines; jxl tries the browser's native decoder first |
+| `imageDecode` | heic/heif/tiff/tif/psd/jxl to png/jpg/webp/jxl | libheif-js, UTIF, ag-psd, jSquash JXL (libjxl wasm) in engines; jxl tries the browser's native decoder first; jxl to jpg with the restore option on goes through `jxlToJpeg` (JPEG reconstruction) |
 | `data` | csv to json, json to csv | in core |
 | `mesh` | stl/obj/3mf to stl/obj/3mf | in core (binary STL, OBJ, 3MF with a zip reader that inflates) |
 | `pdfPptx` | pdf to pptx | pdf.js pages as picture slides via pptxgenjs |
@@ -39,12 +39,12 @@ it). `onProgress` labels show up under the progress bar.
 | `squish.html` | The app. Styles plus UI script inline; loads `squish-core.js` then `squish-engines.js` with plain `<script src>` tags. |
 | `squish-core.js` | Format library, converter registry, option schemas, the three canvas/DXF engines, and every pure helper the heavy engines need (page ranges, zip writer, block model, RTF reader, PDF text grouping, ffmpeg argument builder). UMD-ish IIFE: sets `globalThis.SquishCore` and `module.exports`. No DOM access at load time so Node can `require` it. |
 | `squish-engines.js` | Browser only. Lazy-imports the vendored libraries and replaces the four placeholder engines on `SquishCore.ENGINES`. Also holds `blocksFromHtml` (DOMParser), the docx writer, and the pdf writer. |
-| `squish-jxl-worker.js` | Module worker that runs the JPEG XL encoder off the main thread. Must be deployed next to `squish.html` because it imports from `vendor/` relative to its own URL. |
-| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, and the @jsquash/jxl codec builds. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
+| `squish-jxl-worker.js` | Module worker that runs the JPEG XL encoder and the JPEG transcoder off the main thread. Must be deployed next to `squish.html` because it imports from `vendor/` relative to its own URL. |
+| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, the @jsquash/jxl codec builds, and the jpeg-to-jxl transcoder. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
 | `scripts/serve.cjs` | Dependency-free static server (`npm run serve`, port 8788) with correct MIME types for `.mjs` and `.wasm`. |
 | `scripts/vendor.sh` | Downloads the pinned libraries from unpkg. |
-| `scripts/make-fixtures.cjs` | Regenerates `fixtures/` (two-page PDF, 1 s wav and mp4, md, html, rtf, txt, the 48 by 32 test image as png, heic, tiff, psd, and a lossless jxl). |
-| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 289 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
+| `scripts/make-fixtures.cjs` | Regenerates `fixtures/` (two-page PDF, 1 s wav and mp4, md, html, rtf, txt, the 48 by 32 test image as png, heic, tiff, psd, a lossless jxl, the same picture as a JPEG and as a JPEG-carrying jxl, and a photo-like JPEG). |
+| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 312 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
 | `scripts/serve.test.cjs` | Checks the dev server refuses paths outside the repo. Runs as part of `npm test`. |
 | `squish-tests.html` | Browser runner that does real conversions through every engine. Add `?ffmpeg=1` to include the ffmpeg group (downloads the 31 MB core). |
 | `tests/e2e/conversions.spec.js` | Playwright (`npm run test:e2e`): asserts the browser runner is green and drives `squish.html` for pdf, md, wav, and two failure cases. |
@@ -124,10 +124,30 @@ error, so Cancel is immediate; a worker that crashes or fails to load is
 dropped the same way and the next conversion starts a fresh one. The
 multi-thread encoder builds are not vendored because they need
 SharedArrayBuffer and cross-origin isolation headers. Options can carry
-`targets: ["jxl"]`; `optionsFor(conv, to)` filters them and the UI only
-renders the matches. The `check` option type (a styled checkbox) and
+`targets: ["jxl"]`, `sources: ["jpg","jpeg"]`, and `needs: "<flag>"`;
+`optionsFor(conv, to, from, flags)` filters them and the UI only renders the
+matches. The `check` option type (a styled checkbox) and
 `disables: ["quality"]` (dims the named option while checked) were added for
-this.
+this. A box that starts checked dims its options as soon as they render.
+
+**jpegTranscode (jpg to jxl and back without pixels).** The `transcode`
+option (on by default, JPEG sources only) sends the raster engine straight
+to `jpegToJxl` in engines, which checks the SOI marker (`isJpeg` in core) and
+posts the file bytes to `squish-jxl-worker.js` as a `transcode` job. The
+worker loads `vendor/jpeg-to-jxl/dist/transcode.js` (libjxl built single
+thread by the jpeg-to-jxl project, 2.7 MB wasm, 1 MB gzipped) and calls its
+`_jpeg_to_jxl` export, which is `JxlEncoderAddJPEGFrame` with
+`JxlEncoderStoreJPEGMetadata` on at effort 3. The result is a JPEG XL
+container whose `jbrd` box sits before the codestream. The reverse is the
+`restore` option on imageDecode: `acceptFile` runs `detectJxlJpeg` (core;
+`jxlHasJpegReconstruction` scans the container boxes for `jbrd` in the first
+MB) and the option only renders when the flag is set, through
+`needs: "jpegReconstruction"`. `jxlToJpeg` posts a `reconstruct` job and the
+worker calls `_jxl_to_jpeg` (`JxlDecoderSetJPEGBuffer`), never the package's
+lossy fallback, so a restored file is identical or the job fails with a
+plain message. libjxl refuses arithmetic-coded, 12-bit, and CMYK JPEGs; the
+engine reports that and suggests turning the option off. The 16 megapixel
+cap does not apply because no pixels are decoded.
 
 **pdfRaster (pdf to png/jpg).** pdf.js renders each page to a canvas at
 `dpi/72`, honoring the `pages` option (`parsePageRange`, ranges like

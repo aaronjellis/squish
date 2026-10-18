@@ -592,6 +592,39 @@ ok("jxlSizeError refuses 20 megapixels with a plain message", /20 megapixels/.te
 ok("canvasToJxl is a placeholder until squish-engines.js loads", typeof C.canvasToJxl==="function");
 pending.push(C.canvasToJxl({width:1,height:1},{},()=>{}).then(()=>ok("canvasToJxl placeholder rejects",false),e=>ok("canvasToJxl placeholder rejects with the not-loaded message",/squish-engines\.js is not loaded/.test(e.message))));
 
+/* ---------- JPEG transcoding (jpg to jxl without re-encoding, and back) ---------- */
+section("JPEG transcoding");
+{const raster=C.findConverter("jpg","jxl"),tr=raster.options.find(o=>o.key==="transcode");
+ ok("the transcode option is a check box on for jpg sources that targets jxl", tr?.type==="check"&&tr.def===true&&JSON.stringify(tr.targets)==='["jxl"]'&&JSON.stringify(tr.sources)==='["jpg","jpeg"]');
+ ok("the transcode option dims quality, lossless, and resize", JSON.stringify(tr?.disables)==='["quality","lossless","resize"]');
+ ok("optionsFor shows transcode for jpg and jpeg sources only", C.optionsFor(raster,"jxl","jpg").some(o=>o.key==="transcode")&&C.optionsFor(raster,"jxl","jpeg").some(o=>o.key==="transcode")&&!C.optionsFor(raster,"jxl","png").some(o=>o.key==="transcode")&&!C.optionsFor(raster,"jxl","webp").some(o=>o.key==="transcode"));
+ ok("optionsFor hides transcode for other outputs and without a source", !C.optionsFor(raster,"webp","jpg").some(o=>o.key==="transcode")&&!C.optionsFor(raster,"jxl").some(o=>o.key==="transcode"));
+ ok("optionsFor keeps sourceless options when a source is given", C.optionsFor(raster,"jxl","jpg").some(o=>o.key==="quality")&&C.optionsFor(raster,"jxl","jpg").some(o=>o.key==="lossless"));}
+{const dec=C.findConverter("jxl","jpg"),rs=dec.options.find(o=>o.key==="restore");
+ ok("the restore option is a check box on for jxl sources that targets jpg and needs reconstruction data", rs?.type==="check"&&rs.def===true&&JSON.stringify(rs.targets)==='["jpg"]'&&JSON.stringify(rs.sources)==='["jxl"]'&&rs.needs==="jpegReconstruction");
+ ok("the restore option dims quality and resize", JSON.stringify(rs?.disables)==='["quality","resize"]');
+ ok("optionsFor shows restore only when the flag is set", C.optionsFor(dec,"jpg","jxl",{jpegReconstruction:true}).some(o=>o.key==="restore")&&!C.optionsFor(dec,"jpg","jxl",{jpegReconstruction:false}).some(o=>o.key==="restore")&&!C.optionsFor(dec,"jpg","jxl").some(o=>o.key==="restore"));
+ ok("optionsFor hides restore for png output and heic sources", !C.optionsFor(dec,"png","jxl",{jpegReconstruction:true}).some(o=>o.key==="restore")&&!C.optionsFor(dec,"jpg","heic",{jpegReconstruction:true}).some(o=>o.key==="restore"));}
+{const box=(type,len)=>{const b=new Uint8Array(8+len);new DataView(b.buffer).setUint32(0,8+len);for(let i=0;i<4;i++)b[4+i]=type.charCodeAt(i);return b;};
+ const cat=(...parts)=>{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let o=0;for(const p of parts){out.set(p,o);o+=p.length;}return out;};
+ const sig=cat(new Uint8Array([0,0,0,0x0c,0x4a,0x58,0x4c,0x20,0x0d,0x0a,0x87,0x0a]),box("ftyp",12));
+ ok("jxlHasJpegReconstruction finds a jbrd box before the codestream", C.jxlHasJpegReconstruction(cat(sig,box("jxlp",10),box("jbrd",400),box("jxlc",50))));
+ ok("jxlHasJpegReconstruction finds a jbrd box even when the file is cut off inside it", C.jxlHasJpegReconstruction(cat(sig,box("jbrd",400)).slice(0,60)));
+ ok("jxlHasJpegReconstruction is false for a container without jbrd", !C.jxlHasJpegReconstruction(cat(sig,box("jxlc",50))));
+ ok("jxlHasJpegReconstruction is false for a bare codestream, png bytes, and empty input", !C.jxlHasJpegReconstruction(new Uint8Array([0xff,0x0a,1,2,3,4]))&&!C.jxlHasJpegReconstruction(new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))&&!C.jxlHasJpegReconstruction(new Uint8Array(0)));
+ ok("jxlHasJpegReconstruction stops at a zero-size (to end of file) box without looping", !C.jxlHasJpegReconstruction(cat(sig,new Uint8Array([0,0,0,0,0x6a,0x78,0x6c,0x63,1,2,3]))));
+ ok("jxlHasJpegReconstruction skips a 64-bit box header", C.jxlHasJpegReconstruction(cat(sig,new Uint8Array([0,0,0,1,0x6a,0x78,0x6c,0x70,0,0,0,0,0,0,0,20,1,2,3,4]),box("jbrd",8))));}
+ok("isJpeg accepts SOI followed by a marker and rejects png, short, and empty input", C.isJpeg(new Uint8Array([0xff,0xd8,0xff,0xe0,0,16]))&&!C.isJpeg(new Uint8Array([0x89,0x50,0x4e,0x47]))&&!C.isJpeg(new Uint8Array([0xff,0xd8]))&&!C.isJpeg(new Uint8Array(0)));
+ok("the transcode and restore flags accept the forms the UI and tests send", ["1","true",true].every(v=>C.optOn(v))&&["0","false","",false,undefined].every(v=>!C.optOn(v)));
+pending.push(C.jpegToJxl(new Blob([new Uint8Array([0xff,0xd8,0xff])]),{},()=>{}).then(()=>ok("jpegToJxl placeholder rejects",false),e=>ok("jpegToJxl placeholder rejects with the not-loaded message",/squish-engines\.js is not loaded/.test(e.message))));
+{const box=(type,len)=>{const b=new Uint8Array(8+len);new DataView(b.buffer).setUint32(0,8+len);for(let i=0;i<4;i++)b[4+i]=type.charCodeAt(i);return b;};
+ const sig=new Uint8Array([0,0,0,0x0c,0x4a,0x58,0x4c,0x20,0x0d,0x0a,0x87,0x0a]);
+ pending.push(C.detectJxlJpeg(new Blob([sig,box("ftyp",12),box("jbrd",40),box("jxlc",9)])).then(v=>ok("detectJxlJpeg reads a file and finds the jbrd box",v===true)));
+ pending.push(C.detectJxlJpeg(new Blob([sig,box("ftyp",12),box("jxlc",9)])).then(v=>ok("detectJxlJpeg is false without a jbrd box",v===false)));
+ pending.push(C.detectJxlJpeg(new Blob([new Uint8Array([0xff,0x0a,1,2])])).then(v=>ok("detectJxlJpeg is false for a bare codestream",v===false)));
+ pending.push(C.detectJxlJpeg({slice(){throw new Error("no");}}).then(v=>ok("detectJxlJpeg swallows read errors and answers false",v===false)));}
+pending.push(C.jxlToJpeg(new Blob([new Uint8Array(12)]),{},()=>{}).then(()=>ok("jxlToJpeg placeholder rejects",false),e=>ok("jxlToJpeg placeholder rejects with the not-loaded message",/squish-engines\.js is not loaded/.test(e.message))));
+
 /* ---------- summary ---------- */
 function finish(){
   ok("async checks finished before the summary", asyncMarker);

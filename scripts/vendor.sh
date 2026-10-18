@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PDFJS=4.10.38; MARKED=15.0.12; DOCX=9.5.1; PDFLIB=1.17.1; FFMPEG=0.12.15; FFUTIL=0.12.2
 FONTKIT=1.1.1; DEJAVU=2.37
-LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3; PPTX=4.0.1; JSQJXL=1.3.0
+LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3; PPTX=4.0.1; JSQJXL=1.3.0; JPEG2JXL=0.2.0
 get() { mkdir -p "vendor/$2"; curl -fsSL "https://unpkg.com/$1" -o "vendor/$2/$3" && echo "vendor/$2/$3"; }
 get "pdfjs-dist@$PDFJS/build/pdf.min.mjs"          pdfjs   pdf.min.mjs
 get "pdfjs-dist@$PDFJS/build/pdf.worker.min.mjs"   pdfjs   pdf.worker.min.mjs
@@ -60,6 +60,46 @@ get "pptxgenjs@$PPTX/LICENSE" pptxgenjs LICENSE
 for f in jxl_dec.js jxl_dec.wasm; do get "@jsquash/jxl@$JSQJXL/codec/dec/$f" jsquash-jxl/codec/dec "$f"; done
 for f in jxl_enc.js jxl_enc.wasm; do get "@jsquash/jxl@$JSQJXL/codec/enc/$f" jsquash-jxl/codec/enc "$f"; done
 get "@jsquash/jxl@$JSQJXL/LICENSE" jsquash-jxl LICENSE
+# JPEG transcoding (jpg to jxl without re-encoding pixels, and back): libjxl's JxlEncoderAddJPEGFrame and
+# JxlDecoderSetJPEGBuffer behind a small C glue, compiled single-thread (no SharedArrayBuffer).
+for f in transcode.js transcode.wasm; do get "jpeg-to-jxl@$JPEG2JXL/dist/$f" jpeg-to-jxl/dist "$f"; done
+# jpeg-to-jxl declares BSD-3-Clause in package.json but ships no license file; this is that text. The wasm
+# also contains libjxl (BSD-3-Clause), highway (Apache-2.0), brotli (MIT), and libjpeg (IJG).
+cat > vendor/jpeg-to-jxl/LICENSE <<LIC
+BSD 3-Clause License
+
+Copyright (c) 2026, ChefJulio (jpeg-to-jxl)
+Copyright (c) the JPEG XL Project Authors (libjxl)
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The transcode.wasm binary also contains highway (Apache-2.0), brotli (MIT),
+and the Independent JPEG Group's libjpeg; their notices apply to those parts.
+LIC
+echo "vendor/jpeg-to-jxl/LICENSE"
 cat > vendor/VERSIONS.md <<MD
 # Vendored libraries
 
@@ -79,6 +119,7 @@ Downloaded by \`scripts/vendor.sh\` from unpkg. Do not edit by hand.
 | ag-psd | $AGPSD | ag-psd/bundle.js (MIT) |
 | pptxgenjs | $PPTX | pptxgenjs/pptxgen.bundle.js (MIT) |
 | @jsquash/jxl | $JSQJXL | jsquash-jxl/codec/dec/jxl_dec.{js,wasm}, jsquash-jxl/codec/enc/jxl_enc.{js,wasm} (Apache-2.0, libjxl compiled to wasm; single-thread encoder only) |
+| jpeg-to-jxl | $JPEG2JXL | jpeg-to-jxl/dist/transcode.{js,wasm} (BSD-3-Clause, see jpeg-to-jxl/LICENSE; libjxl JPEG transcoding and reconstruction, 2.7 MB wasm, single thread) |
 | dejavu-fonts-ttf | $DEJAVU | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads

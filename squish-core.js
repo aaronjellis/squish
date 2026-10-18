@@ -69,13 +69,25 @@
   const optResizeAdv={key:"resize",label:"Resize",type:"select",advanced:true,choices:[["1","Keep original size"],["0.5","50% smaller"],["0.25","25%"],["2","2× larger"]],def:"1",hint:"Scaling up can't add detail that isn't in the source."};
   function optDpiSimple(){return {key:"dpi",label:"How sharp?",type:"select",choices:[["96","For screen / sharing"],["150","Good quality"],["300","For printing"]],def:"150",hint:"Sharper looks crisper and makes a bigger file."};}
   const optLossless={key:"lossless",label:"Lossless",type:"check",def:false,targets:["jxl"],disables:["quality"],hint:"Keeps every pixel exactly. Bigger file, and the quality slider is ignored."};
-  // An option can name the outputs it applies to (targets). Options without targets show for every output.
-  function optionsFor(conv,to){to=norm(to);return ((conv&&conv.options)||[]).filter(o=>!o.targets||o.targets.map(norm).includes(to));}
+  // jpg to jxl can repack the JPEG's DCT coefficients instead of decoding and re-encoding pixels (libjxl's
+  // JxlEncoderAddJPEGFrame). The result is smaller, loses nothing, and converts back to the identical JPEG.
+  const optTranscode={key:"transcode",label:"Keep the JPEG data exactly (reversible)",type:"check",def:true,targets:["jxl"],sources:["jpg","jpeg"],disables:["quality","lossless","resize"],
+    hint:"Repacks the JPEG without re-encoding pixels. About 20% smaller, and converting back to JPG gives you the identical file."};
+  // The reverse: a JPEG XL that carries a jbrd box can give back the original JPEG byte for byte. The UI sets
+  // the jpegReconstruction flag after sniffing the file, so the option only appears when it can work.
+  const optRestore={key:"restore",label:"Restore the original JPEG",type:"check",def:true,targets:["jpg"],sources:["jxl"],needs:"jpegReconstruction",disables:["quality","resize"],
+    hint:"This JPEG XL was made from a JPEG and still carries it. You get that exact file back, byte for byte."};
+  // An option can name the outputs it applies to (targets), the inputs it applies to (sources), and a flag the
+  // host must set about the file (needs). Options without those show for every conversion.
+  function optionsFor(conv,to,from,flags){to=norm(to);from=from==null?null:norm(from);
+    return ((conv&&conv.options)||[]).filter(o=>(!o.targets||o.targets.map(norm).includes(to))
+      &&(!o.sources||(from!=null&&o.sources.map(norm).includes(from)))
+      &&(!o.needs||!!(flags&&flags[o.needs])));}
 
   /* ---------- Converter registry: add an entry, get a feature ---------- */
   const CONVERTERS = [
     {from:["png","jpg","jpeg","webp","bmp","gif","avif","ico"], to:["png","jpg","webp","ico","jxl"], engine:"raster", status:"available",
-     options:[optQuality, optLossless, optResizeAdv],
+     options:[optQuality, optLossless, optTranscode, optResizeAdv],
      caveats:["JPEG and WebP are lossy. Below 70% you'll start to see artifacts.",
               "JPEG XL is new. Older browsers and apps may not open it yet.",
               "Transparency disappears when converting to JPEG (it fills with white).",
@@ -96,7 +108,7 @@
      ],
      caveats:["Text and embedded images in the SVG aren't exported. Outline your text first."]},
     {from:["heic","heif","tiff","tif","psd","jxl"], to:["png","jpg","webp","jxl"], engine:"imageDecode", status:"available",
-     options:[optQuality, optLossless, optResizeAdv],
+     options:[optQuality, optLossless, optRestore, optResizeAdv],
      caveats:["Layers, text, and adjustments are flattened to the composite image."]},
     {from:["pdf"], to:["png","jpg"], engine:"pdfRaster", status:"available",
      options:[optDpiSimple(), {key:"pages",label:"Pages",type:"text",advanced:true,def:"",placeholder:"e.g. 1-3, 5",hint:"Leave blank to export every page."}],
@@ -256,9 +268,27 @@
   function jxlEncodeOptions(opts){const lossless=optOn(opts&&opts.lossless);let q=parseInt(opts&&opts.quality,10);if(!(q>=0))q=85;q=Math.min(100,q);
     return {effort:4,quality:lossless?100:q,progressive:false,epf:-1,lossyPalette:false,decodingSpeedTier:0,photonNoiseIso:0,lossyModular:false,lossless};}
   function canvasToJxl(){return notLoaded();} // replaced by squish-engines.js
+  function jpegToJxl(){return notLoaded();}   // replaced by squish-engines.js: JPEG file to JPEG XL without re-encoding
+  function jxlToJpeg(){return notLoaded();}   // replaced by squish-engines.js: JPEG XL with jbrd back to the original JPEG
+  function isJpeg(bytes){return !!bytes&&bytes.length>=3&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff;}
+  // Scans the ISOBMFF boxes of a JPEG XL container for a jbrd (JPEG reconstruction) box. libjxl writes it before
+  // the codestream, so the first few KB of a file are enough. A bare codestream (FF 0A) never has one.
+  function jxlHasJpegReconstruction(bytes){
+    if(!bytes||bytes.length<JXL_CONTAINER.length||!JXL_CONTAINER.every((b,i)=>bytes[i]===b))return false;
+    const dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let i=0;
+    while(i+8<=bytes.length){
+      let size=dv.getUint32(i),hdr=8;
+      if(size===1){if(i+16>bytes.length)return false;size=dv.getUint32(i+8)*4294967296+dv.getUint32(i+12);hdr=16;}
+      if(bytes[i+4]===0x6a&&bytes[i+5]===0x62&&bytes[i+6]===0x72&&bytes[i+7]===0x64)return true; // "jbrd"
+      if(size===0||size<hdr)return false; // runs to the end of the file, or malformed
+      i+=size;
+    }
+    return false;
+  }
 
   const ENGINES = {
     async raster(file,opts,onP,toExt){
+      if(toExt==="jxl"&&optOn(opts.transcode))return api.jpegToJxl(file,opts,onP); // repack the JPEG, no pixels involved
       const img=await loadImage(URL.createObjectURL(file));onP(.4);
       if(toExt==="ico"){
         const max=Math.max(img.width,img.height);let sizes=[16,32,48,64,128,256].filter(z=>z<=max);if(!sizes.length)sizes=[Math.min(256,max)];
@@ -896,6 +926,8 @@
     const m=s.match(/\/Type\s*\/Page[^s]/g);let n=m?m.length:0;const cm=s.match(/\/Count\s+(\d+)/);if(cm)n=Math.max(n,parseInt(cm[1]));
     return Math.max(1,n||1);}catch(e){return 1;}}
 
+  // Does this JPEG XL file carry its original JPEG? Reads the first MB, which is far past where libjxl puts the jbrd box.
+  async function detectJxlJpeg(file){try{const buf=new Uint8Array(await file.slice(0,Math.min(file.size,1e6)).arrayBuffer());return jxlHasJpegReconstruction(buf);}catch(e){return false;}}
   /* ---------- detectImagePdfFromString / pages: sync helpers for tests ---------- */
   function pdfLooksImageBased(s){const hasFont=/\/(Font|BaseFont)/.test(s),hasText=/(BT[\s\S]{0,400}?(Tj|TJ))/.test(s),hasImage=/\/(Image|DCTDecode|JPXDecode|CCITTFaxDecode)/.test(s);return hasImage&&!hasFont&&!hasText;}
   function pdfPageCount(s){const m=s.match(/\/Type\s*\/Page[^s]/g);let n=m?m.length:0;const cm=s.match(/\/Count\s+(\d+)/);if(cm)n=Math.max(n,parseInt(cm[1]));return Math.max(1,n||1);}
@@ -904,8 +936,9 @@
   const api={FORMATS,CAT_COLOR,CAT_GLYPH,optQuality,optResizeAdv,optDpiSimple,optLossless,optionsFor,CONVERTERS,IMPOSSIBLE,
     norm,extOf,findConverter,possibleTargets,impossibleReason,fmtBytes,benchScore,throwIfAborted,summarizeVotes,parsePageRange,crc32,zipStore,zipWrite,unzip,icoFromPngs,parseStl,parseObj,parse3mf,modelXml3mf,to3mf,toStl,toObj,decodeText,parseCsv,toCsv,csvToJson,jsonToCsv,runsText,escapeHtml,blocksFromText,blocksToTxt,blocksToMd,blocksToHtml,blocksToXhtml,epubEntries,rtfToBlocks,pdfSafeText,pdfTextToBlocks,parseTrim,trimError,safeHref,audioKbps,MEDIA_MIME,ffmpegArgs,
     ENGINES,loadImage,canvasBlob,mimeFor,isJxl,jxlSizeError,jxlEncodeOptions,canvasToJxl,JXL_MAX_PIXELS,
+    optTranscode,optRestore,optOn,isJpeg,jxlHasJpegReconstruction,jpegToJxl,jxlToJpeg,
     svgToDxf,parsePath,flattenCubic,flattenQuad,buildDxf,parseTransform,mulMatrix,applyMatrix,arcToCubics,shapeSegs,shapesToDxf,
-    detectImagePdf,detectPdfPages,pdfLooksImageBased,pdfPageCount};
+    detectImagePdf,detectPdfPages,detectJxlJpeg,pdfLooksImageBased,pdfPageCount};
   root.SquishCore=api;
   if (typeof module!=="undefined" && module.exports) module.exports=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
