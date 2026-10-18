@@ -40,11 +40,12 @@ it). `onProgress` labels show up under the progress bar.
 | `squish-core.js` | Format library, converter registry, option schemas, the three canvas/DXF engines, and every pure helper the heavy engines need (page ranges, zip writer, block model, RTF reader, PDF text grouping, ffmpeg argument builder). UMD-ish IIFE: sets `globalThis.SquishCore` and `module.exports`. No DOM access at load time so Node can `require` it. |
 | `squish-engines.js` | Browser only. Lazy-imports the vendored libraries and replaces the four placeholder engines on `SquishCore.ENGINES`. Also holds `blocksFromHtml` (DOMParser), the docx writer, and the pdf writer. |
 | `squish-jxl-worker.js` | Module worker that runs the JPEG XL encoder and the JPEG transcoder off the main thread. Must be deployed next to `squish.html` because it imports from `vendor/` relative to its own URL. |
-| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, the @jsquash/jxl codec builds, and the jpeg-to-jxl transcoder. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`. |
+| `vendor/` | Pinned ESM builds of pdfjs-dist, marked, docx, pdf-lib, @ffmpeg/ffmpeg, @ffmpeg/util, the @jsquash/jxl codec builds, and the JPEG transcoder. See `vendor/VERSIONS.md`. Re-download with `npm run vendor`; the transcoder is built, not downloaded (next rows). |
 | `scripts/serve.cjs` | Dependency-free static server (`npm run serve`, port 8788) with correct MIME types for `.mjs` and `.wasm`. |
-| `scripts/vendor.sh` | Downloads the pinned libraries from unpkg. |
+| `scripts/vendor.sh` | Downloads the pinned libraries from unpkg and writes `vendor/VERSIONS.md`. It does not download the JPEG transcoder; it only checks the two files are there. |
+| `scripts/build-jxl-transcode.sh` | Builds `vendor/jpeg-to-jxl/dist/transcode.{js,wasm}` from libjxl at a release tag plus the glue in `scripts/jxl-transcode/` (C file and CMake config from jpeg-to-jxl v0.2.0, BSD-3-Clause). Needs an activated Emscripten SDK, so it runs in `.github/workflows/build-jxl-transcode.yml` (on demand, or when those sources change), which uploads the two files as an artifact. Pins and the rebuild steps are in `scripts/jxl-transcode/README.md`. |
 | `scripts/make-fixtures.cjs` | Regenerates `fixtures/` (two-page PDF, 1 s wav and mp4, md, html, rtf, txt, the 48 by 32 test image as png, heic, tiff, psd, a lossless jxl, the same picture as a JPEG and as a JPEG-carrying jxl, and a photo-like JPEG). |
-| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 312 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
+| `squish.test.cjs` | Node suite for the pure logic (`npm test`). 314 passing. Also checks for em-dashes, the stated ffmpeg size, and exact dev-dependency pins. |
 | `scripts/serve.test.cjs` | Checks the dev server refuses paths outside the repo. Runs as part of `npm test`. |
 | `squish-tests.html` | Browser runner that does real conversions through every engine. Add `?ffmpeg=1` to include the ffmpeg group (downloads the 31 MB core). |
 | `tests/e2e/conversions.spec.js` | Playwright (`npm run test:e2e`): asserts the browser runner is green and drives `squish.html` for pdf, md, wav, and two failure cases. |
@@ -134,8 +135,9 @@ this. A box that starts checked dims its options as soon as they render.
 option (on by default, JPEG sources only) sends the raster engine straight
 to `jpegToJxl` in engines, which checks the SOI marker (`isJpeg` in core) and
 posts the file bytes to `squish-jxl-worker.js` as a `transcode` job. The
-worker loads `vendor/jpeg-to-jxl/dist/transcode.js` (libjxl built single
-thread by the jpeg-to-jxl project, 2.7 MB wasm, 1 MB gzipped) and calls its
+worker loads `vendor/jpeg-to-jxl/dist/transcode.js` (libjxl v0.12.0 built
+single thread by this repo's workflow from jpeg-to-jxl's glue, 2.7 MB
+wasm, 1 MB gzipped; see `scripts/jxl-transcode/README.md`) and calls its
 `_jpeg_to_jxl` export, which is `JxlEncoderAddJPEGFrame` with
 `JxlEncoderStoreJPEGMetadata` on at effort 3. The result is a JPEG XL
 container whose `jbrd` box sits before the codestream. The reverse is the

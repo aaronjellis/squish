@@ -103,6 +103,10 @@ npm run fixtures         # regenerate fixtures/ (needs ffmpeg and macOS sips for
 npm run vendor           # re-download the pinned libraries and fonts
 ```
 
+The JPEG transcoder wasm is built, not downloaded: the **Build JPEG
+transcoder** workflow compiles libjxl at a pinned tag with a pinned
+Emscripten SDK. See `scripts/jxl-transcode/README.md`.
+
 ## License
 
 MIT. See `LICENSE`. Vendored libraries keep their own licenses, including

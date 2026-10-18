@@ -366,6 +366,13 @@ const sizes=files.filter(f=>OLD_SIZE.test(fs.readFileSync(path.join(__dirname,f)
 ok("the ffmpeg core size is stated one way (31 MB)"+(sizes.length?" ("+sizes+")":""), sizes.length===0);
 const pkg=require("./package.json");
 ok("dev dependencies are pinned exactly", Object.values(pkg.devDependencies||{}).every(v=>/^\d+\.\d+\.\d+$/.test(v)));
+const versions=fs.readFileSync(path.join(__dirname,"vendor/VERSIONS.md"),"utf8");
+const statedWasm=(versions.match(/transcode\.wasm is (\d+) bytes/)||[])[1];
+const realWasm=fs.statSync(path.join(__dirname,"vendor/jpeg-to-jxl/dist/transcode.wasm")).size;
+ok("VERSIONS.md states the real transcode.wasm size ("+realWasm+")", Number(statedWasm)===realWasm);
+const statedSha=(versions.match(/sha256 ([0-9a-f]{64})/)||[])[1];
+const realSha=require("crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname,"vendor/jpeg-to-jxl/dist/transcode.wasm"))).digest("hex");
+ok("VERSIONS.md states the real transcode.wasm sha256", statedSha===realSha);
 
 /* ---------- 16. SVG shapes, arcs, transforms ---------- */
 section("SVG shapes, arcs, transforms");
