@@ -69,3 +69,54 @@ write("sample.html",`<!doctype html><html><head><title>Sample</title><style>p{co
 `);
 write("sample.rtf",String.raw`{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Helvetica;}}\f0\fs24 Hello {\b bold} world\par Second \'e9 paragraph\par}`);
 write("sample.txt","First paragraph of plain text.\n\nSecond paragraph.\n");
+write("latin1.txt",Buffer.from("caf\xe9 \x93quoted\x94\n","latin1"));
+write("people.csv",'name,city,note\nAnn,Oslo,"likes tea, not coffee"\nBo,Lima,\n');
+write("people.json",JSON.stringify([{name:"Ann",city:"Oslo",age:34},{name:"Bo",city:"Lima",age:27}],null,2)+"\n");
+// A 1x1 AVIF (libavif test image) so the browser decode path has an input.
+write("fx.avif",Buffer.from("AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADybWV0YQAAAAAAAAAoaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAeaWxvYwAAAABEAAABAAEAAAABAAABGgAAABgAAAAoaWluZgAAAAAAAQAAABppbmZlAgAAAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAAABAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgQAMAAAAABNjb2xybmNseAACAAIABoAAAAAXaXBtYQAAAAAAAAABAAEEAQKDBAAAACBtZGF0EgAKCBgABogQEAwgMgwf8AAAWAAAAAAs","base64"));
+write("table.md",`# Table fixture
+
+| Name | Age |
+| --- | --- |
+| Ann | 34 |
+| Bo | 27 |
+
+- top
+  - nested
+- back
+
+Some <u>underlined</u> text.
+`);
+write("unicode.md","# Unicode\n\nΩμέγα Привет naïve 🎉 日本語 "+[0x2764,0xFE0F,0x20,0x263A,0xFE0F,0x20,0x2714,0xFE0F,0x20,0x1F600].map(c=>String.fromCodePoint(c)).join("")+"\n");
+// A 48x32 PNG, then HEIC, TIFF, and PSD copies via macOS sips (skipped elsewhere).
+(function(){
+  const zlib=require("zlib");const w=48,h=32,rows=[];
+  for(let y=0;y<h;y++){const row=[0];for(let x=0;x<w;x++)row.push((x*5)%256,(y*7)%256,128,255);rows.push(Buffer.from(row));}
+  const crcT=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;crcT[n]=c>>>0;}
+  const crc=b=>{let c=0xFFFFFFFF;for(const x of b)c=crcT[(c^x)&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};
+  const chunk=(t,d)=>{const len=Buffer.alloc(4);len.writeUInt32BE(d.length);const td=Buffer.concat([Buffer.from(t),d]);const c=Buffer.alloc(4);c.writeUInt32BE(crc(td));return Buffer.concat([len,td,c]);};
+  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w,0);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=6;
+  const png=Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(Buffer.concat(rows))),chunk("IEND",Buffer.alloc(0))]);
+  write("fx.png",png);
+  for(const f of ["heic","tiff","psd"]){
+    try{execFileSync("sips",["-s","format",f,path.join(dir,"fx.png"),"--out",path.join(dir,"fx."+f)],{stdio:"ignore"});console.log("fixtures/fx."+f);}
+    catch(e){console.warn("skipped fx."+f+" (sips not available)");}
+  }
+})();
+// Mesh fixtures: a unit cube as binary STL, OBJ, and a deflated 3MF (as slicers write them).
+(function(){
+  const C=require("../squish-core.js"),zlib=require("zlib"),enc=new TextEncoder();
+  const cube={vertices:[0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1],
+    triangles:[0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 3,0,4, 3,4,7]};
+  write("cube.stl",C.toStl(cube));write("cube.obj",C.toObj(cube));
+  const model=enc.encode(C.modelXml3mf(cube));
+  const stored=C.to3mf(cube);
+  write("cube.3mf",C.zipWrite([
+    {name:"[Content_Types].xml",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')},
+    {name:"_rels/.rels",data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')},
+    {name:"3D/3dmodel.model",data:model,deflate:new Uint8Array(zlib.deflateRawSync(Buffer.from(model)))}]));
+})();
+write("shapes.svg",`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">
+<g transform="translate(50,20)"><rect width="40" height="20" rx="4"/><circle cx="100" cy="10" r="10"/></g>
+<polygon points="0,90 20,70 40,90"/><path d="M150 50 A20 20 0 0 1 190 50"/></svg>
+`);

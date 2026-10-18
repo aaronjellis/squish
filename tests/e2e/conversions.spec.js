@@ -66,3 +66,32 @@ test("app: a malformed trim explains the format",async({page})=>{
   await expect(page.locator("#resultTitle")).toHaveText("hmm, that didn't work",{timeout:60000});
   await expect(page.locator("#resultSub")).toContainText("m:ss-m:ss");
 });
+
+test("app: cancel returns to the options and the next convert works",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("one-second.wav"));
+  const input=page.locator("#targetInput");await input.fill(".mp3");await input.press("Enter");
+  await page.locator("#convertBtn").click();
+  await page.locator("#cancelBtn").click();
+  await expect(page.locator("#cancelNote")).toContainText("Cancelled",{timeout:15000});
+  await expect(page.locator("#result")).not.toHaveClass(/show/);
+  await page.locator("#convertBtn").click();
+  await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:120000});
+});
+
+test("app: csv to json downloads people.json",async({page})=>{
+  const r=await convert(page,"people.csv","json");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("JSON");
+  const [dl]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:/Download/}).click()]);
+  expect(dl.suggestedFilename()).toBe("people.json");
+});
+
+test("app: heic to png",async({page})=>{
+  const r=await convert(page,"fx.heic","png");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("PNG");
+});
+
+test("app: md to epub",async({page})=>{
+  const r=await convert(page,"short.md","epub");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("EPUB");
+});

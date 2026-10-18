@@ -9,20 +9,26 @@ docs. Docs follow the Google developer documentation style guide.
 
 ## Status
 
-Released as 1.0.0 on 2026-10-11 (see `CHANGELOG.md`). Every `available`
-converter has a real engine.
+Released as 1.1.0 on 2026-10-12 (see `CHANGELOG.md`). Every `available`
+converter has a real engine, and every format in the picker is used by one.
 
 | Engine | Conversions | Implementation |
 | --- | --- | --- |
-| `raster` | png/jpg/webp/bmp/gif to png/jpg/webp | canvas, in core |
+| `raster` | png/jpg/webp/bmp/gif/avif/ico to png/jpg/webp/ico | canvas plus an in-house ICO writer, in core |
 | `svgRaster` | svg to png/jpg/webp | canvas, in core |
-| `svgDxf` | svg to dxf | in core, splines or polylines |
+| `svgDxf` | svg to dxf | geometry in core (`shapesToDxf`: paths, lines, rects, circles, ellipses, polygons, arcs, transforms); DOM walk in engines |
+| `imageDecode` | heic/heif/tiff/tif/psd to png/jpg/webp | libheif-js, UTIF, ag-psd in engines |
+| `data` | csv to json, json to csv | in core |
+| `mesh` | stl/obj/3mf to stl/obj/3mf | in core (binary STL, OBJ, 3MF with a zip reader that inflates) |
+| `pdfPptx` | pdf to pptx | pdf.js pages as picture slides via pptxgenjs |
 | `pdfRaster` | pdf to png/jpg (zip for several pages) | pdf.js, `squish-engines.js` |
-| `docs` | md/txt/html/rtf to pdf/docx/html/md/txt | block model in core; marked, docx, pdf-lib in engines |
+| `docs` | md/txt/html/rtf to pdf/docx/epub/html/md/txt | block model v2 in core (nested lists, underline, tables); marked, docx, pdf-lib, fontkit plus DejaVu in engines |
 | `pdfDocx` | pdf to docx | pdf.js text layer, `pdfTextToBlocks` in core |
-| `ffmpeg` | video to mp4/webm/gif/mp3; audio to mp3/wav/m4a/flac/ogg | ffmpeg.wasm, core from unpkg |
+| `ffmpeg` | video to mp4/webm/mov/gif/mp3/m4a; audio to mp3/wav/m4a/flac/ogg/opus/aac | ffmpeg.wasm, core from unpkg |
 
 Engine signature: `(file, opts, onProgress(fraction, label?), toExt) => Promise<Blob | {blob, name}>`.
+`opts.signal` is an optional `AbortSignal`; engines call `throwIfAborted` between
+steps and the Cancel button aborts it.
 Returning `{blob, name}` overrides the download name (the multi-page zip uses
 it). `onProgress` labels show up under the progress bar.
 
@@ -61,8 +67,11 @@ limit of 25 MiB per file on the intended host, so it is fetched from
 `https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/` as blob URLs with a
 download progress label.
 
-Pinned versions: pdfjs-dist 4.10.38, marked 15.0.12, docx 9.5.1, pdf-lib
-1.17.1, @ffmpeg/ffmpeg 0.12.15, @ffmpeg/util 0.12.2, @ffmpeg/core 0.12.10.
+Pinned versions are listed in `vendor/VERSIONS.md` with licenses. UMD builds
+(fontkit, UTIF, ag-psd, pptxgenjs) load through a script tag (`kind: "script"`
+in `LIBS`); the rest are ESM `import()`s. The DejaVu fonts (3 MB) load only
+when a PDF needs characters outside WinAnsi; characters no font covers (emoji,
+CJK) are drawn by the browser with the system font and embedded as images.
 
 Gotchas learned the hard way:
 
@@ -76,6 +85,14 @@ Gotchas learned the hard way:
   must be vendored or the dynamic import 404s.
 - pdf-lib writes pages inside compressed object streams, so do not grep
   generated PDFs for `/Type /Page`; parse them with pdf.js instead.
+- `page.getTextContent()` items that share a baseline are merged into one
+  line, so two-column detection runs on items first (`splitColumns`), then
+  lines are built per column.
+- Node's small-ICU `TextDecoder` leaves Windows-1252 bytes 0x80 to 0x9F as
+  control characters; `decodeText` maps them by hand (`CP1252`).
+- libheif-js's default export is an async factory; call it once and cache.
+- The harness that drives these sessions turns typed `\\uXXXX` into the
+  character. Build such escapes with `String.fromCharCode` instead.
 
 ### Engine by engine
 

@@ -9,6 +9,8 @@
 const C = require("./squish-core.js");
 
 let pass=0, fail=0; const fails=[];
+const pending=[]; // async sections register here so the summary waits for them
+let asyncMarker=false;
 function ok(name, cond){ if(cond){pass++; /*console.log("  ✓",name);*/} else {fail++; fails.push(name); console.log("  ✗ "+name);} }
 function eq(name,a,b){ ok(name+"  (got "+JSON.stringify(a)+")", a===b); }
 function section(t){ console.log("\n"+t); }
@@ -39,7 +41,7 @@ ok("jpeg normalizes to jpg", C.norm("jpeg")==="jpg" && !!C.findConverter("jpeg",
 ok("svg→dxf resolves to svgDxf engine", C.findConverter("svg","dxf")?.engine==="svgDxf");
 ok("png→png is NOT offered (same format)", !C.possibleTargets("png").has("png"));
 ok("possibleTargets(png) includes jpg & webp", C.possibleTargets("png").has("jpg") && C.possibleTargets("png").has("webp"));
-ok("possibleTargets(pdf) marks pptx as planned", C.possibleTargets("pdf").get("pptx")==="planned");
+ok("possibleTargets(pdf) marks pptx as available and dwg as planned", C.possibleTargets("pdf").get("pptx")==="available" && C.possibleTargets("svg").get("dwg")==="planned");
 ok("pdf→docx is available (with caveats)", C.findConverter("pdf","docx")?.status==="available");
 ok("impossible: pdf→mp4 has a reason", !!C.impossibleReason("pdf","mp4"));
 ok("impossible: mp4→docx has a reason", !!C.impossibleReason("mp4","docx"));
@@ -73,7 +75,7 @@ let tm = C.parsePath("M0 0 Q5 10 10 0 T20 0");
 ok("T becomes a quad (Q)", tm[2].cmd==="Q");
 // Arc does not throw and yields a segment to its endpoint
 let arc = C.parsePath("M0 0 A5 5 0 0 1 10 10");
-ok("A → line to endpoint (no throw)", arc[1].cmd==="L" && arc[1].x===10 && arc[1].y===10);
+ok("A → cubic curve ending at the endpoint (no throw)", arc[1].cmd==="C" && Math.abs(arc[arc.length-1].x-10)<1e-9 && Math.abs(arc[arc.length-1].y-10)<1e-9);
 // a malformed / truncated path must not throw and must return something usable
 let trunc;
 try{ trunc = C.parsePath("M0 0 C10 10 20"); ok("truncated path doesn't throw", true); }
@@ -152,10 +154,10 @@ section("Engine placeholders");
 ok("md→docx resolves to the docs engine", C.findConverter("md","docx")?.engine==="docs");
 ok("no converter still points at 'pandoc'", !C.CONVERTERS.some(c=>c.engine==="pandoc"));
 ok("simulate() is gone", typeof C.simulate==="undefined");
-(async()=>{
+pending.push((async()=>{
   let msg="";try{await C.ENGINES.pdfRaster({},{},()=>{},"png");}catch(e){msg=String(e.message);}
   ok("placeholder engine rejects with a clear message", /squish-engines\.js/.test(msg));
-})();
+})());
 
 /* ---------- 8. Page ranges ---------- */
 section("Page ranges");
@@ -352,8 +354,8 @@ ok("md escapes a leading dash", mdEsc.includes("\\- not a bullet"));
 ok("md escapes a leading >", mdEsc.includes("\\> not a quote"));
 ok("md wraps hrefs with spaces or parens in <>", C.blocksToMd([{type:"p",runs:[{text:"w",href:"https://x.org/a (b)"}]}]).includes("[w](<https://x.org/a (b)>)"));
 // canvasBlob rejects instead of resolving null
-(async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}},"image/png");}catch(e){msg=e.message;}
-  ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})();
+pending.push((async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}},"image/png");}catch(e){msg=e.message;}
+  ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})());
 // text hygiene across shipped and doc files
 const DASH=String.fromCharCode(0x2014);
 const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh"];
@@ -365,11 +367,204 @@ ok("the ffmpeg core size is stated one way (31 MB)"+(sizes.length?" ("+sizes+")"
 const pkg=require("./package.json");
 ok("dev dependencies are pinned exactly", Object.values(pkg.devDependencies||{}).every(v=>/^\d+\.\d+\.\d+$/.test(v)));
 
+/* ---------- 16. SVG shapes, arcs, transforms ---------- */
+section("SVG shapes, arcs, transforms");
+const I=[1,0,0,1,0,0];
+eq("blank transform is identity", JSON.stringify(C.parseTransform("")), JSON.stringify(I));
+eq("translate", JSON.stringify(C.applyMatrix(C.parseTransform("translate(10,5)"),[1,1])), "[11,6]");
+eq("scale with one value", JSON.stringify(C.applyMatrix(C.parseTransform("scale(2)"),[3,4])), "[6,8]");
+ok("rotate 90 about origin", (p=>Math.abs(p[0])<1e-9&&Math.abs(p[1]-10)<1e-9)(C.applyMatrix(C.parseTransform("rotate(90)"),[10,0])));
+ok("rotate about a center", (p=>Math.abs(p[0]-5)<1e-9&&Math.abs(p[1]-5)<1e-9)(C.applyMatrix(C.parseTransform("rotate(90 5 5)"),[5,5])));
+eq("matrix() and chained transforms compose left to right", JSON.stringify(C.applyMatrix(C.parseTransform("translate(10) scale(2)"),[1,0])), "[12,0]");
+const rectSegs=C.shapeSegs({tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5"}});
+eq("rect is a closed 4-line path", rectSegs.map(s=>s.cmd).join(""), "MLLLZ");
+ok("rounded rect uses curves", C.shapeSegs({tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5",rx:"1"}}).some(s=>s.cmd==="C"));
+eq("circle is 4 cubics", C.shapeSegs({tag:"circle",attrs:{cx:"0",cy:"0",r:"5"}}).filter(s=>s.cmd==="C").length, 4);
+eq("polygon closes, polyline does not", C.shapeSegs({tag:"polygon",attrs:{points:"0,0 10,0 10,10"}}).map(s=>s.cmd).join("")+"|"+C.shapeSegs({tag:"polyline",attrs:{points:"0,0 10,0 10,10"}}).map(s=>s.cmd).join(""), "MLLZ|MLL");
+const arcQ=C.arcToCubics(10,0,10,10,0,0,1,0,10);
+ok("quarter arc becomes one cubic", arcQ.length===1);
+ok("arc cubic midpoint lies on the circle", (()=>{const s=arcQ[0];const t=0.5,mt=0.5;const x=mt**3*10+3*mt*mt*t*s.x1+3*mt*t*t*s.x2+t**3*s.x;const y=mt**3*0+3*mt*mt*t*s.y1+3*mt*t*t*s.y2+t**3*s.y;return Math.abs(Math.hypot(x,y)-10)<0.03;})());
+eq("half arc becomes two cubics", C.arcToCubics(10,0,10,10,0,1,1,-10,0).length, 2);
+ok("path A command now produces a curve", C.parsePath("M10 0 A10 10 0 0 1 0 10").some(s=>s.cmd==="C"));
+const dxfT=C.shapesToDxf([{tag:"rect",attrs:{x:"0",y:"0",width:"10",height:"5"},ctm:C.parseTransform("translate(100,50)")}],"splines",0.5);
+ok("group transform moves a rect", /\n10\n100\n20\n-50\n/.test(dxfT) && /\n10\n110\n/.test(dxfT));
+ok("a circle under scale(2) emits splines with control points at radius 10", (()=>{const d=C.shapesToDxf([{tag:"circle",attrs:{cx:"0",cy:"0",r:"5"},ctm:C.parseTransform("scale(2)")}],"splines",0.5);return /\nSPLINE\n/.test(d)&&/\n10\n10\n20\n(-0|0)\n/.test(d);})());
+eq("shapesToDxf still emits a line for <line>", (C.shapesToDxf([{tag:"line",attrs:{x1:"0",y1:"0",x2:"1",y2:"1"},ctm:I}],"splines",0.5).match(/\nLINE\n/g)||[]).length, 1);
+
+/* ---------- 17. Text decoding ---------- */
+section("Text decoding");
+const u8=a=>new Uint8Array(a);
+eq("utf-8 decodes", C.decodeText(u8([0x63,0x61,0x66,0xc3,0xa9])), "caf"+String.fromCharCode(0xe9));
+eq("utf-8 BOM is stripped", C.decodeText(u8([0xef,0xbb,0xbf,0x68,0x69])), "hi");
+eq("invalid utf-8 falls back to windows-1252", C.decodeText(u8([0x63,0x61,0x66,0xe9,0x20,0x93,0x71,0x94])), "caf"+String.fromCharCode(0xe9)+" "+String.fromCharCode(0x201c)+"q"+String.fromCharCode(0x201d));
+eq("utf-16le BOM decodes", C.decodeText(u8([0xff,0xfe,0x68,0x00,0x69,0x00])), "hi");
+eq("utf-16be BOM decodes", C.decodeText(u8([0xfe,0xff,0x00,0x68,0x00,0x69])), "hi");
+eq("empty input is empty", C.decodeText(u8([])), "");
+
+/* ---------- 18. CSV and JSON ---------- */
+section("CSV and JSON");
+eq("simple rows", JSON.stringify(C.parseCsv("a,b\n1,2\n")), '[["a","b"],["1","2"]]');
+eq("quoted comma, escaped quote, newline in quotes", JSON.stringify(C.parseCsv('x,y\r\n"a, b","say ""hi""\nthere"')), '[["x","y"],["a, b","say \\"hi\\"\\nthere"]]');
+eq("semicolon delimiter is detected", JSON.stringify(C.parseCsv("a;b\n1;2")), '[["a","b"],["1","2"]]');
+eq("tab delimiter is detected", JSON.stringify(C.parseCsv("a\tb\n1\t2")), '[["a","b"],["1","2"]]');
+eq("toCsv quotes only what needs it", C.toCsv([["a","b, c",'q"'],[1,true,null]]), 'a,"b, c","q"""\n1,true,\n');
+const jj=JSON.parse(C.csvToJson("name,age,ok\nAnn,34,true\nBo,,false\n"));
+eq("csvToJson uses the header and converts numbers and booleans", JSON.stringify(jj), '[{"name":"Ann","age":34,"ok":true},{"name":"Bo","age":"","ok":false}]');
+eq("jsonToCsv from an array of objects unions the keys", C.jsonToCsv('[{"a":1,"b":"x"},{"b":"y","c":true}]'), "a,b,c\n1,x,\n,y,true\n");
+eq("jsonToCsv from an array of arrays", C.jsonToCsv('[["h1","h2"],[1,2]]'), "h1,h2\n1,2\n");
+eq("jsonToCsv finds the first array inside an object", C.jsonToCsv('{"meta":1,"rows":[{"a":1}]}'), "a\n1\n");
+ok("jsonToCsv rejects a scalar", (()=>{try{C.jsonToCsv("42");return false;}catch(e){return /array/.test(e.message);}})());
+ok("csv and json converters are registered", C.findConverter("csv","json")?.engine==="data"&&C.findConverter("json","csv")?.engine==="data");
+pending.push((async()=>{const b=await C.ENGINES.data(new File(["a,b\n1,2"],"t.csv"),{},()=>{},"json");const txt=await b.text();
+  ok("data engine csv to json returns JSON with numbers", b.type==="application/json"&&txt.includes('"a": 1'));
+  const c=await C.ENGINES.data(new File(['[{"x":"y, z"}]'],"t.json"),{},()=>{},"csv");
+  eq("data engine json to csv quotes commas", await c.text(), 'x\n"y, z"\n');})());
+
+/* ---------- 19. More ffmpeg outputs ---------- */
+section("More ffmpeg outputs");
+ok("mov output uses h264 in a mov container", (a=>a.includes("libx264")&&a[a.indexOf("-f")+1]==="mov")(A("mp4","mov",{})));
+ok("opus output caps the bitrate at 256k with vbr", (a=>a.includes("libopus")&&a[a.indexOf("-b:a")+1]==="256k"&&a.includes("-vbr"))(A("wav","opus",{quality:"95"})));
+ok("aac output is raw ADTS", (a=>a.includes("aac")&&a[a.indexOf("-f")+1]==="adts")(A("wav","aac",{})));
+ok("video to m4a drops the video", (a=>a.includes("-vn")&&a.includes("aac"))(A("mp4","m4a",{})));
+eq("mime for mov, opus, aac", [C.MEDIA_MIME.mov,C.MEDIA_MIME.opus,C.MEDIA_MIME.aac].join("|"), "video/quicktime|audio/ogg|audio/aac");
+ok("registry offers mov and m4a from video, opus and aac from audio", C.findConverter("mp4","mov")?.engine==="ffmpeg"&&C.findConverter("mov","m4a")?.engine==="ffmpeg"&&C.findConverter("wav","opus")?.engine==="ffmpeg"&&C.findConverter("mp3","aac")?.engine==="ffmpeg");
+
+/* ---------- 20. ICO ---------- */
+section("ICO");
+const png1=new Uint8Array([0x89,0x50,0x4e,0x47,1,2,3]),png2=new Uint8Array([0x89,0x50,0x4e,0x47,9,8]);
+const ico=C.icoFromPngs([{w:16,h:16,png:png1},{w:256,h:256,png:png2}]);
+const iv=new DataView(ico.buffer);
+ok("ICONDIR header: reserved 0, type 1, count 2", iv.getUint16(0,true)===0&&iv.getUint16(2,true)===1&&iv.getUint16(4,true)===2);
+ok("entry 1: 16x16, size and offset point at the png", ico[6]===16&&ico[7]===16&&iv.getUint32(14,true)===7&&iv.getUint32(18,true)===6+32);
+ok("entry 2: 256 is written as 0", ico[22]===0&&ico[23]===0&&iv.getUint32(34,true)===6+32+7);
+ok("png bytes follow the directory in order", ico[38]===0x89&&ico[6+32+7]===0x89);
+ok("raster accepts avif and ico, and writes ico", C.findConverter("avif","png")?.engine==="raster"&&C.findConverter("ico","png")?.engine==="raster"&&C.findConverter("png","ico")?.engine==="raster");
+eq("mime for ico", C.mimeFor("ico"), "image/x-icon");
+
+/* ---------- 21. EPUB ---------- */
+section("EPUB");
+const ep=C.epubEntries([{type:"h1",runs:[{text:"T"}]},{type:"p",runs:[{text:"a<b"},{text:"\n"},{text:"c"}]},{type:"hr",runs:[]}],"My Book");
+eq("mimetype is the first entry", ep[0].name+":"+new TextDecoder().decode(ep[0].data), "mimetype:application/epub+zip");
+ok("container.xml points at the opf", ep[1].name==="META-INF/container.xml"&&/full-path="OEBPS\/content\.opf"/.test(new TextDecoder().decode(ep[1].data)));
+const opf=new TextDecoder().decode(ep.find(e=>e.name==="OEBPS/content.opf").data);
+ok("opf has title, identifier, manifest, and spine", /<dc:title>My Book<\/dc:title>/.test(opf)&&/<dc:identifier id="pub-id">urn:uuid:[0-9a-f-]{36}<\/dc:identifier>/.test(opf)&&/href="chapter.xhtml"/.test(opf)&&/<itemref idref="chapter"/.test(opf)&&/properties="nav"/.test(opf));
+const xh=new TextDecoder().decode(ep.find(e=>e.name==="OEBPS/chapter.xhtml").data);
+ok("chapter is XHTML: namespace, self-closing hr and br, escaped text", /xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/.test(xh)&&/<hr\/>/.test(xh)&&/<br\/>/.test(xh)&&/a&lt;b/.test(xh)&&!/<br>/.test(xh)&&!/<hr>/.test(xh));
+ok("the zip starts with the stored mimetype at offset 38", (z=>new TextDecoder().decode(z.subarray(38,58)))(C.zipStore(ep))==="application/epub+zip");
+ok("docs converter offers epub", C.findConverter("md","epub")?.engine==="docs");
+
+/* ---------- 22. Block model v2: nested lists, underline, tables ---------- */
+section("Block model v2");
+const nested=[{type:"li",runs:[{text:"a"}]},{type:"li",level:1,runs:[{text:"b"}]},{type:"li",runs:[{text:"c"}]},{type:"ol",runs:[{text:"one"}]},{type:"ol",level:1,runs:[{text:"two"}]}];
+eq("md indents nested items", C.blocksToMd(nested), "- a\n  - b\n- c\n\n1. one\n   1. two\n");
+ok("html nests the lists", (h=>h.includes("<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul>\n</li>\n<li>c</li>\n</ul>"))(C.blocksToHtml(nested,"t")));
+ok("txt indents nested items", C.blocksToTxt(nested).includes("- a\n  - b\n- c"));
+const tbl=[{type:"table",header:true,rows:[[[{text:"Name"}],[{text:"Age"}]],[[{text:"Ann"}],[{text:"34"}]],[[{text:"B|o"}],[{text:""}]]]}];
+eq("md pipe table", C.blocksToMd(tbl), "| Name | Age |\n| --- | --- |\n| Ann | 34 |\n| B\\|o |  |\n");
+ok("html table with thead", (h=>h.includes("<table>\n<thead>\n<tr><th>Name</th><th>Age</th></tr>\n</thead>\n<tbody>\n<tr><td>Ann</td><td>34</td></tr>"))(C.blocksToHtml(tbl,"t")));
+ok("txt table uses tabs", C.blocksToTxt(tbl).includes("Name\tAge\nAnn\t34"));
+ok("underline survives in html and md", C.blocksToHtml([{type:"p",runs:[{text:"u",u:true}]}],"t").includes("<u>u</u>")&&C.blocksToMd([{type:"p",runs:[{text:"u",u:true}]}]).includes("<u>u</u>"));
+ok("rtf \\ul and \\ulnone toggle underline", (r=>r[0].runs.map(x=>!!x.u).join(","))(C.rtfToBlocks(String.raw`{\rtf1 \ul on\ulnone  off}`))==="true,false");
+ok("xhtml table and nested list are well formed", (x=>x.includes("<table>")&&x.includes("<ul>\n<li>a\n<ul>"))(C.blocksToXhtml([...nested,...tbl],"t")));
+
+/* ---------- 23. HEIC, TIFF, PSD registry ---------- */
+section("HEIC, TIFF, PSD registry");
+eq("heif and tif normalize", C.norm("heif")+","+C.norm("tif"), "heic,tiff");
+ok("heic, tiff, psd route to the imageDecode engine", ["heic","tiff","psd"].every(f=>C.findConverter(f,"png")?.engine==="imageDecode"&&C.findConverter(f,"webp")?.engine==="imageDecode"));
+ok("heic is no longer a planned format", !C.CONVERTERS.some(c=>c.status==="planned"&&c.from.includes("heic")));
+
+/* ---------- 24. Mesh formats ---------- */
+section("Mesh formats");
+const cube={vertices:[0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1],
+  triangles:[0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 3,0,4, 3,4,7]};
+const stlB=C.toStl(cube);
+eq("binary STL size is 84 + 50 per triangle", stlB.length, 84+50*12);
+eq("binary STL round-trips", C.parseStl(stlB).triangles.length+":"+C.parseStl(stlB).vertices.length, "36:24");
+const asciiStl="solid c\n facet normal 0 0 0\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid c\n";
+eq("ascii STL parses one triangle", JSON.stringify(C.parseStl(new TextEncoder().encode(asciiStl))), '{"vertices":[0,0,0,1,0,0,0,1,0],"triangles":[0,1,2]}');
+const objTxt=C.toObj(cube);
+ok("OBJ has 8 v lines and 12 f lines (1-based)", (objTxt.match(/^v /gm)||[]).length===8&&(objTxt.match(/^f /gm)||[]).length===12&&/^f 1 3 2$/m.test(objTxt));
+eq("OBJ parser triangulates quads and accepts v/vt/vn", JSON.stringify(C.parseObj("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1/1/1 2/2/2 3/3/3 4/4/4\n").triangles), "[0,1,2,0,2,3]");
+eq("OBJ negative indices count from the end", JSON.stringify(C.parseObj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\n").triangles), "[0,1,2]");
+ok("mesh converter is registered both ways", C.findConverter("stl","3mf")?.engine==="mesh"&&C.findConverter("3mf","obj")?.engine==="mesh"&&C.findConverter("obj","stl")?.engine==="mesh");
+ok("step and iges stay planned, pdf to xlsx is gone", C.possibleTargets("step").get("stl")==="planned"&&!C.possibleTargets("pdf").has("xlsx"));
+pending.push((async()=>{
+  const m3=await C.parse3mf(C.to3mf(cube));
+  eq("3MF round-trips (stored zip)", m3.vertices.length+":"+m3.triangles.length, "24:36");
+  const zlib=require("zlib");const enc=new TextEncoder();
+  const model=enc.encode(C.modelXml3mf(cube));
+  const dz=C.zipWrite([
+    {name:"[Content_Types].xml",data:enc.encode('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')},
+    {name:"_rels/.rels",data:enc.encode('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')},
+    {name:"3D/3dmodel.model",data:model,deflate:new Uint8Array(zlib.deflateRawSync(Buffer.from(model)))}]);
+  const entries=await C.unzip(dz);
+  ok("unzip inflates a deflated entry", entries.find(e=>e.name==="3D/3dmodel.model")?.data.length===model.length);
+  const m4=await C.parse3mf(dz);
+  eq("reads a deflated 3MF", m4.vertices.length+":"+m4.triangles.length, "24:36");
+  const blob=await C.ENGINES.mesh(new File([C.toStl(cube)],"cube.stl"),{},()=>{},"obj");
+  ok("mesh engine stl to obj", blob.type==="model/obj"&&(await blob.text()).includes("\nf "));
+  const b3=await C.ENGINES.mesh(new File([objTxt],"cube.obj"),{},()=>{},"3mf");
+  ok("mesh engine obj to 3mf is a zip", b3.type==="model/3mf"&&new Uint8Array(await b3.arrayBuffer())[0]===0x50);
+  let msg="";try{await C.ENGINES.mesh(new File(["nonsense"],"x.stl"),{},()=>{},"obj");}catch(e){msg=e.message;}
+  ok("an unreadable mesh fails clearly", /couldn't|no triangles/i.test(msg), msg);
+})());
+
+/* ---------- 25. PDF to PowerPoint registry ---------- */
+section("PDF to PowerPoint registry");
+ok("pdf to pptx routes to pdfPptx with sharpness and pages options", (c=>c&&c.engine==="pdfPptx"&&c.options.some(o=>o.key==="dpi")&&c.options.some(o=>o.key==="pages"))(C.findConverter("pdf","pptx")));
+ok("pptx is no longer planned", !C.CONVERTERS.some(c=>c.status==="planned"&&c.to.includes("pptx")));
+
+/* ---------- 26. Cancellation ---------- */
+section("Cancellation");
+ok("throwIfAborted is quiet without a signal", (()=>{try{C.throwIfAborted(undefined);C.throwIfAborted(new AbortController().signal);return true;}catch(e){return false;}})());
+ok("throwIfAborted throws a cancelled error for an aborted signal", (()=>{const ac=new AbortController();ac.abort();try{C.throwIfAborted(ac.signal);return false;}catch(e){return e.cancelled===true&&/Cancelled/.test(e.message);}})());
+pending.push((async()=>{const ac=new AbortController();ac.abort();let msg="";
+  try{await C.ENGINES.data(new File(["a,b"],"t.csv"),{signal:ac.signal},()=>{},"json");}catch(e){msg=e.message;}
+  ok("the data engine honors an aborted signal", /Cancelled/.test(msg), msg);
+  try{await C.ENGINES.mesh(new File([C.toStl({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]})],"t.stl"),{signal:ac.signal},()=>{},"obj");msg="";}catch(e){msg=e.message;}
+  ok("the mesh engine honors an aborted signal", /Cancelled/.test(msg), msg);})());
+
+/* ---------- 27. Two-column PDFs ---------- */
+section("Two-column PDFs");
+{const it2=(str,x,y)=>({str,x,y,size:11,width:200});
+ const twoCol=[[it2("Left one.",72,700),it2("Right one.",330,700),it2("Left two.",72,684),it2("Right two.",330,684),it2("Left three.",72,668),it2("Right three.",330,668),it2("Left four.",72,652),it2("Right four.",330,652)]];
+ const text=C.pdfTextToBlocks(twoCol).map(b=>C.runsText(b.runs)).join(" | ");
+ ok("two columns read down the left column, then the right", text.startsWith("Left one. Left two. Left three. Left four.")&&/Right one\. Right two\. Right three\. Right four\./.test(text), text);
+ ok("the column break starts a new paragraph", C.pdfTextToBlocks(twoCol).length===2, C.pdfTextToBlocks(twoCol).length+" blocks");
+ const oneCol=[[it2("A line that spans.",72,700),it2("Another full line.",72,684),it2("Third.",72,668),it2("Fourth.",72,652)]];
+ eq("a single column is unchanged", C.pdfTextToBlocks(oneCol).map(b=>C.runsText(b.runs)).join("|"), "A line that spans. Another full line. Third. Fourth.");
+ const indented=[[it2("Body line.",72,700),it2("Body line two.",72,684),it2("Body three.",72,668),it2("x",90,652),it2("Body four.",72,636)]];
+ eq("a lone indented item does not count as a column", C.pdfTextToBlocks(indented).length, 1);}
+
+/* ---------- 28. Every format does something ---------- */
+section("Every format does something");
+{const used=new Set();C.CONVERTERS.filter(c=>c.status==="available").forEach(c=>{c.from.forEach(f=>used.add(C.norm(f)));c.to.forEach(t=>used.add(C.norm(t)));});
+ const allowed=new Set(["dwg","step","stp","iges","igs","zip","eps","ai"]);
+ const idle=Object.keys(C.FORMATS).filter(f=>!used.has(f)&&!allowed.has(f));
+ ok("every described format is used by a real converter"+(idle.length?" (idle: "+idle+")":""), idle.length===0);
+ ok("the only planned targets are dwg and step", C.CONVERTERS.filter(c=>c.status==="planned").every(c=>c.to.every(t=>["dwg","step","stl","3mf"].includes(t))));
+ eq("version is 1.1.0", require("./package.json").version, "1.1.0");}
+
+/* ---------- 29. Review fixes, round two ---------- */
+section("Review fixes, round two");
+eq("csvValue keeps leading zeros", JSON.parse(C.csvToJson("zip\n02134\n"))[0].zip, "02134");
+eq("csvValue keeps long digit strings", JSON.parse(C.csvToJson("id\n12345678901234567890\n"))[0].id, "12345678901234567890");
+eq("csvValue still converts plain numbers and negatives", JSON.stringify(JSON.parse(C.csvToJson("a,b\n34,-1.5\n"))[0]), '{"a":34,"b":-1.5}');
+pending.push((async()=>{
+  const z=C.to3mf({vertices:[0,0,0,1,0,0,0,1,0],triangles:[0,1,2]});const dv=new DataView(z.buffer);
+  let eocd=-1;for(let i=z.length-22;i>=0;i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+  dv.setUint32(eocd+16,0x7fffff00,true); // central directory offset points outside the file
+  let msg="";try{await C.parse3mf(z);}catch(e){msg=e.message;}
+  ok("a corrupt zip offset gives the plain zip error, not a RangeError", /zip archive/.test(msg), msg);
+})());
+
 /* ---------- summary ---------- */
 function finish(){
+  ok("async checks finished before the summary", asyncMarker);
   console.log("\n────────────────────────────");
   console.log(`  ${pass} passed, ${fail} failed`);
   if(fail){console.log("  FAILED: "+fails.join(" | "));process.exit(1);}
   else console.log("  ✅ all green");
 }
-setTimeout(finish, 50);
+pending.push((async()=>{await new Promise(r=>setTimeout(r,150));asyncMarker=true;})());
+Promise.all(pending).then(finish,e=>{console.log("  ✗ an async section threw: "+(e&&e.message));fail++;finish();});
