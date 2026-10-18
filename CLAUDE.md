@@ -9,7 +9,7 @@ docs. Docs follow the Google developer documentation style guide.
 
 ## Status
 
-Released as 1.1.0 on 2026-10-12 (see `CHANGELOG.md`). Every `available`
+Released as 1.2.0 on 2026-10-18 (see `CHANGELOG.md`). Every `available`
 converter has a real engine, and every format in the picker is used by one.
 
 | Engine | Conversions | Implementation |
