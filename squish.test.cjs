@@ -543,7 +543,8 @@ section("Every format does something");
  const idle=Object.keys(C.FORMATS).filter(f=>!used.has(f)&&!allowed.has(f));
  ok("every described format is used by a real converter"+(idle.length?" (idle: "+idle+")":""), idle.length===0);
  ok("the only planned targets are dwg and step", C.CONVERTERS.filter(c=>c.status==="planned").every(c=>c.to.every(t=>["dwg","step","stl","3mf"].includes(t))));
- eq("version is 1.1.0", require("./package.json").version, "1.1.0");}
+{const top=(fs.readFileSync("CHANGELOG.md","utf8").match(/^## (\d+\.\d+\.\d+)/m)||[])[1];
+ eq("package.json version matches the newest changelog entry ("+top+")", pkg.version, top);}}
 
 /* ---------- 29. Review fixes, round two ---------- */
 section("Review fixes, round two");
