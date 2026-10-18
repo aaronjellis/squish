@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PDFJS=4.10.38; MARKED=15.0.12; DOCX=9.5.1; PDFLIB=1.17.1; FFMPEG=0.12.15; FFUTIL=0.12.2
 FONTKIT=1.1.1; DEJAVU=2.37
-LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3; PPTX=4.0.1
+LIBHEIF=1.23.5; UTIF=3.1.0; AGPSD=31.0.3; PPTX=4.0.1; JSQJXL=1.3.0
 get() { mkdir -p "vendor/$2"; curl -fsSL "https://unpkg.com/$1" -o "vendor/$2/$3" && echo "vendor/$2/$3"; }
 get "pdfjs-dist@$PDFJS/build/pdf.min.mjs"          pdfjs   pdf.min.mjs
 get "pdfjs-dist@$PDFJS/build/pdf.worker.min.mjs"   pdfjs   pdf.worker.min.mjs
@@ -55,6 +55,11 @@ get "ag-psd@$AGPSD/dist/bundle.js" ag-psd bundle.js
 get "ag-psd@$AGPSD/LICENSE" ag-psd LICENSE
 get "pptxgenjs@$PPTX/dist/pptxgen.bundle.js" pptxgenjs pptxgen.bundle.js
 get "pptxgenjs@$PPTX/LICENSE" pptxgenjs LICENSE
+# JPEG XL: only the decoder and the single-thread encoder. The multi-thread encoder builds need
+# SharedArrayBuffer, which needs cross-origin isolation headers the host does not send.
+for f in jxl_dec.js jxl_dec.wasm; do get "@jsquash/jxl@$JSQJXL/codec/dec/$f" jsquash-jxl/codec/dec "$f"; done
+for f in jxl_enc.js jxl_enc.wasm; do get "@jsquash/jxl@$JSQJXL/codec/enc/$f" jsquash-jxl/codec/enc "$f"; done
+get "@jsquash/jxl@$JSQJXL/LICENSE" jsquash-jxl LICENSE
 cat > vendor/VERSIONS.md <<MD
 # Vendored libraries
 
@@ -73,6 +78,7 @@ Downloaded by \`scripts/vendor.sh\` from unpkg. Do not edit by hand.
 | utif | $UTIF | utif/UTIF.js (MIT) |
 | ag-psd | $AGPSD | ag-psd/bundle.js (MIT) |
 | pptxgenjs | $PPTX | pptxgenjs/pptxgen.bundle.js (MIT) |
+| @jsquash/jxl | $JSQJXL | jsquash-jxl/codec/dec/jxl_dec.{js,wasm}, jsquash-jxl/codec/enc/jxl_enc.{js,wasm} (Apache-2.0, libjxl compiled to wasm; single-thread encoder only) |
 | dejavu-fonts-ttf | $DEJAVU | dejavu/*.ttf (Bitstream Vera license, see dejavu/LICENSE). Loaded only when a PDF needs characters outside WinAnsi. |
 
 The ffmpeg wasm core (@ffmpeg/core 0.12.10, 31 MB) is not vendored. It loads

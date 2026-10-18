@@ -91,6 +91,36 @@ test("app: heic to png",async({page})=>{
   expect(r.title).toBe("ta-da!");expect(r.sub).toContain("PNG");
 });
 
+test("app: jxl to png",async({page})=>{
+  const r=await convert(page,"fx.jxl","png");
+  expect(r.title).toBe("ta-da!");expect(r.sub).toContain("PNG");
+});
+
+test("app: png to jxl with the lossless checkbox",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("fx.png"));
+  const input=page.locator("#targetInput");await expect(input).toBeVisible();
+  await input.fill(".jxl");await input.press("Enter");
+  const box=page.locator("#optGrid .opt[data-key=lossless] input[type=checkbox]");
+  await expect(box).toBeVisible();
+  await box.check();
+  await expect(page.locator("#optGrid .opt[data-key=quality]")).toHaveClass(/dim/);
+  await page.locator("#convertBtn").click();
+  await expect(page.locator("#resultTitle")).toHaveText("ta-da!",{timeout:60000});
+  await expect(page.locator("#resultSub")).toContainText("JXL");
+  const [dl]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:/Download/}).click()]);
+  expect(dl.suggestedFilename()).toBe("fx.jxl");
+});
+
+test("app: the lossless checkbox only shows for jxl",async({page})=>{
+  await page.goto("/squish.html");
+  await page.setInputFiles("#fileInput",fx("fx.png"));
+  const input=page.locator("#targetInput");await expect(input).toBeVisible();
+  await input.fill(".webp");await input.press("Enter");
+  await expect(page.locator("#convertBtn")).toBeVisible();
+  await expect(page.locator("#optGrid .opt[data-key=lossless]")).toHaveCount(0);
+});
+
 test("app: md to epub",async({page})=>{
   const r=await convert(page,"short.md","epub");
   expect(r.title).toBe("ta-da!");expect(r.sub).toContain("EPUB");

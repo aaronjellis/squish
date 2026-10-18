@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- JPEG XL in both directions. A `.jxl` file converts to PNG, JPG, or WebP,
+  using the browser's own decoder when it has one and a 300 KB wasm decoder
+  otherwise. Any image or SVG converts to `.jxl` through a 500 KB wasm
+  encoder, with the quality slider or a new **Lossless** checkbox.
+
 ## 1.1.0 (2026-10-12)
 
 Every format in the picker now does something, and the finished engines fill
