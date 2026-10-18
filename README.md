@@ -49,8 +49,11 @@ The app makes two kinds of network request:
 - A one-time download of the ffmpeg engine (31 MB) from unpkg.com, the first
   time you convert video or audio.
 
-The format request button keeps its tally in your browser's local storage.
-Every conversion has a Cancel button.
+The format request button keeps its tally in your browser's local storage,
+and the **view requested formats** link shows it in the app. A host that wants
+to collect votes sets `data-vote-endpoint` on the `<html>` element; the app
+then posts each vote (the two format names, nothing else) there and reads
+totals from it. Every conversion has a Cancel button.
 
 ## Known limits
 

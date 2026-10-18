@@ -558,6 +558,16 @@ pending.push((async()=>{
   ok("a corrupt zip offset gives the plain zip error, not a RangeError", /zip archive/.test(msg), msg);
 })());
 
+/* ---------- 30. Vote summary ---------- */
+section("Vote summary");
+{const sum=C.summarizeVotes({["svg"+String.fromCharCode(0x2192)+"dwg"]:2,["pdf"+String.fromCharCode(0x2192)+"xlsx"]:1},{"input_png":5,"input_svg":3,"convert_png_jpg":9},[{from:"svg",to:"dwg",count:12},{from:"step",to:"stl",count:4}]);
+ eq("server totals win and local counts are kept as mine", JSON.stringify(sum.requested[0]), '{"from":"svg","to":"dwg","count":12,"mine":2}');
+ eq("server-only pairs appear with mine 0", JSON.stringify(sum.requested[1]), '{"from":"step","to":"stl","count":4,"mine":0}');
+ eq("local-only pairs appear with their local count", JSON.stringify(sum.requested[2]), '{"from":"pdf","to":"xlsx","count":1,"mine":1}');
+ eq("dropped types come from input_ stats, sorted", JSON.stringify(sum.dropped), '[{"ext":"png","count":5},{"ext":"svg","count":3}]');
+ eq("no server data falls back to local counts", C.summarizeVotes({["a"+String.fromCharCode(0x2192)+"b"]:3},{},null).requested[0].count, 3);
+ eq("empty everything is empty", JSON.stringify(C.summarizeVotes({},{},null)), '{"requested":[],"dropped":[]}');}
+
 /* ---------- summary ---------- */
 function finish(){
   ok("async checks finished before the summary", asyncMarker);

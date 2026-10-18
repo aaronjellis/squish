@@ -143,7 +143,10 @@ Done. Engines report `onProgress(fraction, label)`, the UI follows real
 progress after the paced minimum, labels replace the generic phrases, and a
 failure shows "hmm, that didn't work" with the engine's own message (or a
 friendlier one for network and memory errors). The vote button keeps a local
-tally only.
+tally and, when `<html data-vote-endpoint="…">` is set by the host, POSTs
+`{from, to, page}` there and GETs `{votes: [{from, to, count}]}` for the
+requested-formats panel (`#statsDlg`, a `<dialog>`). `summarizeVotes` in core
+merges server totals with the local tally.
 
 ## Testing
 
