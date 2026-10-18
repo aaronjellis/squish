@@ -358,7 +358,7 @@ pending.push((async()=>{let msg="";try{await C.canvasBlob({toBlob(cb){cb(null);}
   ok("canvasBlob rejects with a clear message when the canvas is too big", /too large/i.test(msg));})());
 // text hygiene across shipped and doc files
 const DASH=String.fromCharCode(0x2014);
-const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh"];
+const files=["squish.html","squish-core.js","squish-engines.js","squish-tests.html","squish.test.cjs","README.md","CHANGELOG.md","CLAUDE.md","vendor/VERSIONS.md",".github/workflows/test.yml","scripts/vendor.sh",".github/workflows/build-jxl-transcode.yml","scripts/build-jxl-transcode.sh","scripts/jxl-transcode/README.md","scripts/jxl-transcode/CMakeLists.txt","scripts/jxl-transcode/transcode.c"];
 const dashy=files.filter(f=>fs.readFileSync(path.join(__dirname,f),"utf8").includes(DASH));
 ok("no em-dashes in shipped or doc files"+(dashy.length?" ("+dashy+")":""), dashy.length===0);
 const OLD_SIZE=new RegExp("3"+"2 MB");
